@@ -73,7 +73,10 @@ case "$1 $2" in
   "pr merge") exit 0 ;;
   "api --paginate")
     [ "${STUB_ORG_APPS:-}" = FAIL ] && exit 1
-    [ -z "${STUB_ORG_APPS:-}" ] || printf '%s\n' $STUB_ORG_APPS; exit 0 ;;
+    [ -n "${STUB_ORG_APPS:-}" ] || exit 0
+    prev=
+    for a in "$@"; do [ "$prev" = --jq ] && q=$a; prev=$a; done
+    jq -r "$q" "$STUB_ORG_APPS"; exit ;;
   "api orgs/"*) [ "${STUB_ORG_PERM:-}" = FAIL ] && exit 1; echo "${STUB_ORG_PERM:-}"; exit 0 ;;
   "api repos/"*) [ -n "${STUB_REPO_PRIVATE:-}" ] || exit 1; echo "$STUB_REPO_PRIVATE"; exit 0 ;;
 esac
@@ -706,26 +709,43 @@ check "base permission: API failure gives the manual check" grep -q 'could not r
 check "base permission: asked the org endpoint" grep -q 'gh api orgs/acme --jq' "$T/gh.log"
 
 # GitHub Apps installed on all repositories: warns with the fix, never blocks.
-# The stub prints what gh's --jq filter would: one slug per all-repos app.
+# The stub runs the real --jq filter over fixtures shaped like GitHub's
+# documented GET /orgs/{org}/installations response.
+cat >"$T/installations-mixed.json" <<'EOF'
+{"total_count": 2, "installations": [
+  {"id": 1, "app_id": 11, "app_slug": "ci-bot", "target_type": "Organization", "repository_selection": "all",
+   "account": {"login": "acme"}},
+  {"id": 2, "app_id": 22, "app_slug": "docs-sync", "target_type": "Organization", "repository_selection": "selected",
+   "account": {"login": "acme"}}
+]}
+EOF
+cat >"$T/installations-selected.json" <<'EOF'
+{"total_count": 1, "installations": [
+  {"id": 2, "app_id": 22, "app_slug": "docs-sync", "target_type": "Organization", "repository_selection": "selected",
+   "account": {"login": "acme"}}
+]}
+EOF
 apps() { env STUB_ORG_APPS="$1" bash -c '. "$2/setup/common/lib.sh"; . "$2/setup/work-brain/lib.sh"; wb_app_installations acme' _ "$1" "$repo" >"$T/apps.out" 2>&1; }
-check "app installations: none on all repositories is ok" apps ""
-check "app installations: none says so" grep -q 'no GitHub App is installed on all repositories of acme' "$T/apps.out"
-check "app installations: none gives no warning" bash -c '! grep -qi warn "$1"' _ "$T/apps.out"
-check "app installations: some on all repositories warns but does not fail" apps "ci-bot docs-sync"
-check "app installations: names the first app" grep -q "GitHub App 'ci-bot' is installed on all repositories of acme" "$T/apps.out"
-check "app installations: names the second app" grep -q "GitHub App 'docs-sync' is installed on all repositories of acme" "$T/apps.out"
-check "app installations: gives the fix" grep -q 'Repository access: Only select repositories, or uninstall' "$T/apps.out"
+if command -v jq >/dev/null 2>&1; then
+  check "app installations: only selected-repos apps is ok" apps "$T/installations-selected.json"
+  check "app installations: none says so" grep -q 'no GitHub App is installed on all repositories of acme' "$T/apps.out"
+  check "app installations: none gives no warning" bash -c '! grep -qi warn "$1"' _ "$T/apps.out"
+  check "app installations: an all-repos app warns but does not fail" apps "$T/installations-mixed.json"
+  check "app installations: names the all-repos app" grep -q "GitHub App 'ci-bot' is installed on all repositories of acme" "$T/apps.out"
+  check "app installations: does not name the selected-repos app" bash -c '! grep -q docs-sync "$1"' _ "$T/apps.out"
+  check "app installations: gives the fix" grep -q 'Repository access: Only select repositories, or uninstall' "$T/apps.out"
+else
+  printf 'skip   app installations jq filter checks (jq not installed)\n'
+fi
 check "app installations: unreadable warns, does not fail" apps FAIL
 check "app installations: unreadable says so and gives the manual check" \
   grep -q 'could not read the app installations of .acme.*check by hand' "$T/apps.out"
-check "app installations: asked the installations endpoint for all-repos apps" \
-  grep -q 'gh api --paginate orgs/acme/installations --jq .*repository_selection == "all"' "$T/gh.log"
 
 # Connecting a remote: explicit, re-checks collisions, then warns on base permission.
 mkdir -p "$T/gh-acme"
 BR=$T/gh-acme/binnacle-acme-engineering-jdoe.git
 git init -q --bare "$BR"
-connect() { env STUB_ORG_PERM=read STUB_ORG_APPS=ci-bot "$B/setup/work-brain/connect-remote.sh" "$@" >"$T/connect.out" 2>&1; }
+connect() { env STUB_ORG_PERM=read STUB_ORG_APPS="$T/installations-mixed.json" "$B/setup/work-brain/connect-remote.sh" "$@" >"$T/connect.out" 2>&1; }
 git init -q --bare "$T/gh-acme/wrong-name.git"
 check "connect: refuses a repository with another name" expect_fail connect --url "$T/gh-acme/wrong-name.git"
 check "connect: refuses a public GitHub repository" expect_fail env STUB_REPO_PRIVATE=false \
@@ -739,7 +759,11 @@ check "connect: origin set" test "$(git -C "$B" remote get-url origin)" = "$BR"
 check "connect: main pushed" test "$(git -C "$BR" rev-parse main)" = "$(git -C "$B" rev-parse main)"
 check "connect: leaves local-only mode" expect_fail git -C "$B" config --get binnacle.localOnly
 check "connect: warns on a readable base permission" grep -q "base repository permission is 'read'" "$T/connect.out"
-check "connect: warns on an app installed on all repositories" grep -q "GitHub App 'ci-bot' is installed on all repositories" "$T/connect.out"
+if command -v jq >/dev/null 2>&1; then
+  check "connect: warns on an app installed on all repositories" grep -q "GitHub App 'ci-bot' is installed on all repositories" "$T/connect.out"
+else
+  printf 'skip   connect: app installation warning (jq not installed)\n'
+fi
 check "connect: re-run is safe" connect --url "$BR"
 check "connect: setup re-run accepts the connected origin" wb_setup --org acme-engineering --user jdoe
 check "connect: refuses a different repository once connected" expect_fail connect --url "$T/gh-acme2/binnacle-acme-engineering-jdoe.git"
