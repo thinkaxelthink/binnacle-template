@@ -78,8 +78,9 @@ checklist item names its device.
    (read and capture only; `~/binnacle`, never inside the employer's
    documents folder, which is set locally and never committed).
 
-`setup/common/install-hooks.sh` installs the hook and checks for gitleaks;
-the Mac scripts call it.
+`setup/common/install-hooks.sh` installs the hook, checks for gitleaks and
+records its path in `git config binnacle.gitleaks` (so GUI git clients such
+as Obsidian find it); the Mac scripts call it.
 
 ## Building a second, separate brain
 

@@ -13,6 +13,14 @@ contract material, no credentials.
 
 - [ ] **[work Mac, human]** Install Homebrew, then
       `brew install git gitleaks`.
+      If Homebrew on this Mac belongs to another macOS user, install
+      gitleaks per-user instead: download the macOS archive and the
+      checksums file for the latest release from
+      github.com/gitleaks/gitleaks/releases, verify it with
+      `shasum -a 256 -c --ignore-missing gitleaks_<version>_checksums.txt`,
+      and put the `gitleaks` binary in `~/.local/bin`. The script below
+      records where gitleaks is, so the hook finds it even when Obsidian
+      runs git without `~/.local/bin` on its PATH.
 - [ ] **[work Mac, human]** Install Obsidian.
 - [ ] **[work Mac, human]** Record your employer's documents folder, so the
       script can refuse to place the vault inside it. This stays in this
@@ -40,7 +48,8 @@ contract material, no credentials.
 It refuses to run until `binnacle.workDocs` is set, refuses any vault
 location inside that folder, verifies the clone, marks it
 `git config binnacle.role capture`, and installs the gitleaks + 10 MB
-pre-commit hook.
+pre-commit hook, recording the gitleaks path in
+`git config binnacle.gitleaks`.
 
 ## In Obsidian
 
@@ -48,7 +57,9 @@ pre-commit hook.
 - [ ] **[work Mac, human]** Community plugins on; enable **Obsidian Git**
       (already listed in the committed `.obsidian/`).
 - [ ] **[work Mac, human]** Obsidian Git settings: auto pull on startup on;
-      auto commit-and-sync on a timer; pull before push on.
+      auto commit-and-sync on a timer; pull before push on; **Sync method:
+      Rebase** (not Merge). These settings stay on this Mac (`data.json` is
+      not committed).
 - [ ] **[work Mac, human]** Write only in `raw/inbox/` (captures) and
       `soundings/` (hand-written notes). Read everything else.
 - [ ] **[work Mac, human]** Do not run Claude Code or any other AI tool
