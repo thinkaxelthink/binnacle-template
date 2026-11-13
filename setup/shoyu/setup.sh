@@ -3,7 +3,9 @@
 #
 # Usage: setup/shoyu/setup.sh
 # Env:   BINNACLE_OWNER (thinkaxelthink), BINNACLE_REPO (binnacle),
-#        BINNACLE_DIR (~/binnacle), BINNACLE_MIN_OBSIDIAN (1.13)
+#        BINNACLE_DIR (~/binnacle), BINNACLE_MIN_OBSIDIAN (1.13),
+#        BINNACLE_GH_TOKEN_FILE (unset; a mode-600 token file for when the
+#        keychain is unreachable, recorded as binnacle.ghTokenFile)
 #
 # Human-only steps (token, App Store, logins, plugin install) are in
 # setup/shoyu/CHECKLIST.md. Run this after its "Before the script" items.
@@ -27,6 +29,11 @@ git -C "$BINNACLE_DIR" config binnacle.role wiki-writer
 bn_ok "binnacle.role = wiki-writer (bin/binnacle-run only runs where this is set)"
 git -C "$BINNACLE_DIR" config binnacle.ghTokenItem "$BINNACLE_REPO-gh-token"
 bn_ok "binnacle.ghTokenItem = $BINNACLE_REPO-gh-token (keychain item bin/binnacle-run reads for gh)"
+if [ -n "${BINNACLE_GH_TOKEN_FILE:-}" ] && [ -f "$BINNACLE_GH_TOKEN_FILE" ]; then
+  token_file=$(bn_physical_path "$BINNACLE_GH_TOKEN_FILE")
+  git -C "$BINNACLE_DIR" config binnacle.ghTokenFile "$token_file"
+  bn_ok "binnacle.ghTokenFile = $token_file (used when the keychain item is unreachable)"
+fi
 
 bn_log "hooks"
 "$BINNACLE_DIR/setup/common/install-hooks.sh" "$BINNACLE_DIR"

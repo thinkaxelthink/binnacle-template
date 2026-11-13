@@ -60,6 +60,7 @@ printf '#!/bin/sh\necho "leak found" >&2\nexit 1\n' >"$T/stubs/gitleaks-fail"
 cat >"$T/stubs/gh" <<'EOF'
 #!/bin/sh
 echo "gh $*" >>"$STUB_LOG"
+[ -z "${STUB_TOKEN_LOG:-}" ] || echo "token=${GH_TOKEN:-}" >>"$STUB_TOKEN_LOG"
 case "$1 $2" in
   "pr list") [ -n "${STUB_GH_OPEN:-}" ] && echo "https://github.com/example/binnacle/pull/9"; exit 0 ;;
   "pr create") echo "https://github.com/example/binnacle/pull/1"; exit 0 ;;
@@ -185,6 +186,34 @@ commit_file raw/inbox/second-idea.md "Another idea."
 git -C "$V" push -q origin main
 
 check "run: refuses while a run PR is open" expect_fail env STUB_GH_OPEN=1 STUB_CLAUDE_MODE=ok "$V/bin/binnacle-run"
+
+# GitHub token: keychain first, then binnacle.ghTokenFile; GH_TOKEN in the
+# environment wins over both. An open run PR stops each run right after the
+# lookup, so the stub gh records which token it got and nothing else happens.
+mkdir -p "$T/nokeychain"
+printf '#!/bin/sh\necho "User interaction is not allowed." >&2\nexit 36\n' >"$T/nokeychain/security"
+chmod +x "$T/nokeychain/security"
+tokfile=$T/gh-token
+printf 'file-token-123\n' >"$tokfile"
+chmod 600 "$tokfile"
+git -C "$V" config binnacle.ghTokenFile "$tokfile"
+token_run() { # extra env... -> run output in $T/run.out, token gh saw in $T/token.log
+  : >"$T/token.log"
+  env -u GH_TOKEN PATH="$T/nokeychain:$PATH" STUB_GH_OPEN=1 STUB_TOKEN_LOG="$T/token.log" "$@" \
+    bash -x "$V/bin/binnacle-run" >"$T/run.out" 2>&1 || true
+}
+token_run
+check "token: file used when the keychain is unreachable" grep -qx 'token=file-token-123' "$T/token.log"
+check "token: newline stripped, value never printed (even under bash -x)" \
+  bash -c '! grep -q file-token-123 "$1"' _ "$T/run.out"
+chmod 640 "$tokfile"
+token_run
+check "token: file with group/other access refused" grep -q 'refusing binnacle.ghTokenFile' "$T/run.out"
+check "token: refused file never reaches gh" test ! -s "$T/token.log"
+chmod 600 "$tokfile"
+token_run GH_TOKEN=env-token-456
+check "token: GH_TOKEN from the environment wins" grep -qx 'token=env-token-456' "$T/token.log"
+git -C "$V" config --unset binnacle.ghTokenFile
 
 : >"$T/gh.log"
 sleep 1

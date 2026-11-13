@@ -16,6 +16,15 @@ shoyu is the only machine where Claude Code writes the wiki. Do
       open PRs and enable auto-merge:
       `security add-generic-password -U -s binnacle-gh-token -a "$USER" -w`
       (prompts for the token; nothing lands in shell history).
+
+      If the keychain is unreachable from the session that runs
+      `bin/binnacle-run` (e.g. over SSH, where `security` fails with "User
+      interaction is not allowed"), keep the token in a file instead: one
+      line, owned by you, mode 600 (`chmod 600`), outside the vault, e.g.
+      `~/.config/binnacle/gh-token`. Pass it to the script below as
+      `BINNACLE_GH_TOKEN_FILE=~/.config/binnacle/gh-token`, which records it
+      as `git config binnacle.ghTokenFile`. The keychain item still wins when
+      it is readable; `bin/binnacle-run` refuses a file other users can read.
 - [ ] **[shoyu, human]** Clone the vault; when git asks, the username is
       your GitHub login and the password is the token. The macOS keychain
       keeps it for later pushes.
