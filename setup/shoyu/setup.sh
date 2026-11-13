@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Set up shoyu, the only machine where Claude Code writes the wiki. Idempotent.
+#
+# Usage: setup/shoyu/setup.sh
+# Env:   BINNACLE_OWNER (thinkaxelthink), BINNACLE_REPO (binnacle),
+#        BINNACLE_DIR (~/binnacle), BINNACLE_MIN_OBSIDIAN (1.13)
+#
+# Human-only steps (token, App Store, logins, plugin install) are in
+# setup/shoyu/CHECKLIST.md. Run this after its "Before the script" items.
+set -eu
+
+here=$(cd "$(dirname "$0")" && pwd -P)
+# shellcheck source=../common/lib.sh
+. "$here/../common/lib.sh"
+
+problems=0
+problem() {
+  bn_warn "$*"
+  problems=$((problems + 1))
+}
+
+bn_log "vault clone"
+bn_clone_vault
+
+bn_log "machine role"
+git -C "$BINNACLE_DIR" config binnacle.role wiki-writer
+bn_ok "binnacle.role = wiki-writer (bin/binnacle-run only runs where this is set)"
+git -C "$BINNACLE_DIR" config binnacle.ghTokenItem "$BINNACLE_REPO-gh-token"
+bn_ok "binnacle.ghTokenItem = $BINNACLE_REPO-gh-token (keychain item bin/binnacle-run reads for gh)"
+
+bn_log "hooks"
+"$BINNACLE_DIR/setup/common/install-hooks.sh" "$BINNACLE_DIR"
+
+bn_log "tools"
+for tool in git gh claude; do
+  if command -v "$tool" >/dev/null 2>&1; then
+    bn_ok "$tool: $(command -v "$tool")"
+  else
+    problem "$tool not found on PATH (see CHECKLIST.md)"
+  fi
+done
+
+bn_log "Obsidian >= $BINNACLE_MIN_OBSIDIAN"
+ver=$(bn_obsidian_version)
+if [ -z "$ver" ]; then
+  problem "Obsidian not found in /Applications (see CHECKLIST.md)"
+elif bn_version_ge "$ver" "$BINNACLE_MIN_OBSIDIAN"; then
+  bn_ok "Obsidian $ver"
+else
+  problem "Obsidian $ver is older than $BINNACLE_MIN_OBSIDIAN - update it (Settings > General > Check for updates)"
+fi
+
+bn_log "Obsidian Git plugin"
+if [ -d "$BINNACLE_DIR/.obsidian/plugins/obsidian-git" ]; then
+  bn_ok "obsidian-git present in the vault"
+else
+  bn_warn "obsidian-git not installed yet - CHECKLIST.md, 'In Obsidian'"
+fi
+
+if [ "$problems" -gt 0 ]; then
+  bn_die "$problems check(s) failed; fix them and re-run (safe to repeat)"
+fi
+bn_log "shoyu ready. Remaining human steps: $here/CHECKLIST.md"

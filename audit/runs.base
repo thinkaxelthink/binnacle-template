@@ -1,0 +1,36 @@
+filters:
+  and:
+    - file.inFolder("audit/runs")
+    - file.ext == "md"
+properties:
+  file.name:
+    displayName: Run
+  note.date:
+    displayName: Date
+  note.status:
+    displayName: Status
+  note.sources:
+    displayName: Sources
+  note.pages:
+    displayName: Pages
+  note.lint_flags:
+    displayName: Lint flags
+  note.pr:
+    displayName: PR
+  note.merged:
+    displayName: Merged
+views:
+  - type: table
+    name: All runs
+    order:
+      - file.name
+      - note.date
+      - note.status
+      - note.sources
+      - note.pages
+      - note.lint_flags
+      - note.pr
+      - note.merged
+    sort:
+      - property: file.name
+        direction: DESC

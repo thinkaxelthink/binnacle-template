@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Binnacle pre-commit hook. Installed by setup/common/install-hooks.sh
+# (git config core.hooksPath .githooks).
+#
+# Rejects the commit when:
+#   1. any staged file is larger than 10 MB (BINNACLE_MAX_FILE_BYTES), or
+#   2. gitleaks finds a secret in the staged changes, or
+#   3. gitleaks cannot be found (fail closed: no scan, no commit).
+set -eu
+
+max_bytes=${BINNACLE_MAX_FILE_BYTES:-10485760}
+root=$(git rev-parse --show-toplevel)
+
+fail() {
+  printf 'binnacle pre-commit: %s\n' "$*" >&2
+  exit 1
+}
+
+# 1. Size cap on every added, copied, modified or renamed staged file.
+too_big=0
+while IFS= read -r -d '' path; do
+  size=$(git cat-file -s ":$path" 2>/dev/null || echo 0)
+  if [ "$size" -gt "$max_bytes" ]; then
+    printf 'binnacle pre-commit: %s is %s bytes (limit %s bytes)\n' "$path" "$size" "$max_bytes" >&2
+    too_big=1
+  fi
+done < <(git diff --cached --name-only --diff-filter=ACMR -z)
+[ "$too_big" -eq 0 ] || fail "unstage files over the 10 MB cap (git restore --staged <file>)"
+
+# 2. Secret scan. GUI apps such as Obsidian run hooks with a minimal PATH,
+#    so also look in the Homebrew locations.
+gitleaks=${BINNACLE_GITLEAKS:-}
+if [ -z "$gitleaks" ]; then
+  gitleaks=$(PATH="$PATH:/opt/homebrew/bin:/usr/local/bin" command -v gitleaks || true)
+fi
+[ -n "$gitleaks" ] && [ -x "$gitleaks" ] \
+  || fail "gitleaks not found; install it (brew install gitleaks) - refusing to commit unscanned"
+
+set -- git --pre-commit --staged --redact --no-banner --log-level warn
+[ -f "$root/.gitleaks.toml" ] && set -- "$@" --config "$root/.gitleaks.toml"
+( cd "$root" && "$gitleaks" "$@" "$root" ) \
+  || fail "gitleaks flagged staged changes (or failed); remove the secret and rotate it"

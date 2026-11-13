@@ -1,0 +1,25 @@
+# --- Obsidian ---------------------------------------------------------------
+# .obsidian/ is committed so every device shares settings, core plugins and
+# community plugins. These parts stay local:
+
+# Per-device window layout and open tabs.
+.obsidian/workspace*
+# Caches written by Obsidian or plugins.
+.obsidian/cache/
+.obsidian/**/cache/
+# Obsidian Git plugin settings are per device and may hold credentials.
+.obsidian/plugins/obsidian-git/data.json
+# Anything else that looks like it carries a credential.
+.obsidian/**/*token*
+.obsidian/**/*secret*
+.obsidian/**/*credential*
+.obsidian/**/*password*
+# Obsidian's local trash.
+.trash/
+
+# --- Claude Code -------------------------------------------------------------
+.claude/settings.local.json
+
+# --- macOS / editors ----------------------------------------------------------
+.DS_Store
+*.swp
