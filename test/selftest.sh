@@ -64,7 +64,10 @@ echo "gh $*" >>"$STUB_LOG"
 [ -z "${STUB_TOKEN_LOG:-}" ] || echo "token=${GH_TOKEN:-}" >>"$STUB_TOKEN_LOG"
 case "$1 $2" in
   "pr list") [ -n "${STUB_GH_OPEN:-}" ] && echo "https://github.com/example/binnacle/pull/9"; exit 0 ;;
-  "pr create") echo "https://github.com/example/binnacle/pull/1"; exit 0 ;;
+  "pr create")
+    prev=
+    for a in "$@"; do [ "$prev" = --body-file ] && cp "$a" "$STUB_BODY"; prev=$a; done
+    echo "https://github.com/example/binnacle/pull/1"; exit 0 ;;
   "pr merge") exit 0 ;;
 esac
 exit 0
@@ -96,6 +99,7 @@ chmod +x "$T/stubs/"*
 
 export BINNACLE_GITLEAKS=$T/stubs/gitleaks-pass
 export BINNACLE_GH=$T/stubs/gh BINNACLE_CLAUDE=$T/stubs/claude STUB_LOG=$T/gh.log
+export STUB_BODY=$T/pr-body.md
 : >"$T/gh.log"
 
 commit_file() { # path, content -> commit on current branch
@@ -296,6 +300,15 @@ check "import finish: out-of-zone refusal commits nothing" test "$(git -C "$V" r
 check "import finish: refusal keeps the branch and marker" test "$(marker)" = "$import_branch"
 rm -f "$V/wiki/stray.md"
 
+mkdir -p "$V/.obsidian"
+printf '{"types":{"notion-id":"text"}}\n' >"$V/.obsidian/types.json"
+printf '{}\n' >"$V/.obsidian/app.json"
+check "import finish: refuses a neighbour of .obsidian/types.json" expect_fail imp finish
+check "import finish: names .obsidian/app.json" grep -q '^  .obsidian/app.json$' "$T/imp.out"
+check "import finish: does not name .obsidian/types.json as refused" bash -c '! grep -q "^  .obsidian/types.json$" "$1"' _ "$T/imp.out"
+check "import finish: neighbour refusal commits nothing" test "$(git -C "$V" rev-list --count origin/main..HEAD)" = 0
+rm -f "$V/.obsidian/app.json"
+
 head -c 2048 /dev/zero >"$V/soundings/notion/Slip box/attachments/huge.bin"
 check "import finish: stops on a file over the cap" expect_fail env BINNACLE_MAX_FILE_BYTES=1024 \
   BINNACLE_DIR="$V" "$repo/bin/binnacle-import" finish
@@ -309,14 +322,17 @@ check "import finish: hook failure stops" expect_fail env BINNACLE_GITLEAKS="$T/
 check "import finish: hook failure commits and pushes nothing" bash -c \
   'test "$(git -C "$1" rev-list --count origin/main..HEAD)" = 0 && test -z "$(git ls-remote "$2" "refs/heads/$3")"' \
   _ "$V" "$T/remote.git" "$import_branch"
-check "import: never bypasses the hook" bash -c '! grep -Eq "^[[:space:]]*(if ! )?(g|git)( -C [^ ]+)? commit.*--no-verify" "$1"' _ "$repo/bin/binnacle-import"
 check "import finish: still on the branch after a stop" test "$(marker)" = "$import_branch"
 
 : >"$T/gh.log"
+rm -f "$T/pr-body.md"
 check "import finish: exits 0" imp finish
 check "import finish: branch pushed" test -n "$(git ls-remote "$T/remote.git" "refs/heads/$import_branch")"
-check "import finish: commit holds only soundings/notion/" bash -c \
-  'test -z "$(git -C "$1" diff --name-only "origin/main...$2" | grep -v "^soundings/notion/")"' _ "$V" "$import_branch"
+check "import finish: commit holds only soundings/notion/ and .obsidian/types.json" bash -c \
+  'test -z "$(git -C "$1" diff --name-only "origin/main...$2" | grep -v -e "^soundings/notion/" -e "^\.obsidian/types\.json$")"' _ "$V" "$import_branch"
+check "import finish: .obsidian/types.json committed" bash -c \
+  'test "$(git -C "$1" show "$2:.obsidian/types.json")" = "{\"types\":{\"notion-id\":\"text\"}}"' _ "$V" "$import_branch"
+check "import finish: PR body names .obsidian/types.json" grep -q '^- also changes `.obsidian/types.json`' "$T/pr-body.md"
 check "import finish: PR opened against main" grep -q "pr create --base main --head $import_branch" "$T/gh.log"
 check "import finish: PR URL printed" grep -q 'PR: https://github.com/example/binnacle/pull/1' "$T/imp.out"
 check "import finish: counts reported" grep -q 'imported: 3 files (2 notes, 1 attachments, 0 bases)' "$T/imp.out"

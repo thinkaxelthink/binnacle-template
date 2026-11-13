@@ -132,8 +132,9 @@ What those sources establish:
       It refuses unless `~/binnacle` is the wiki-writer clone, on `main`,
       clean and equal to `origin/main`. It creates
       `import/notion-<UTC timestamp>`, records it in
-      `git config binnacle.importBranch` (other jobs wait while it is set)
-      and is safe to re-run. `bin/binnacle-import status` shows where
+      `git config binnacle.importBranch` (a marker that scheduled jobs,
+      such as a future nightly `bin/binnacle-run`, must check; nothing
+      enforces it yet) and is safe to re-run. `bin/binnacle-import status` shows where
       things stand.
 - [ ] **[shoyu, owner]** Open Importer (command palette: **Importer:
       Import notes**, or the ribbon icon), choose **Notion**, then
@@ -172,7 +173,9 @@ What those sources establish:
       ```
 
       It refuses, and lists the paths, if anything changed outside
-      `soundings/notion/`; move or revert those and re-run. It stops and
+      `soundings/notion/`; move or revert those and re-run. The import
+      may also change `.obsidian/types.json` (Obsidian's property types);
+      that is expected, and `finish` commits it and names it in the PR. It stops and
       lists every file over 10 MB for your decision (delete or shrink it
       in `soundings/notion/`, then re-run; the cap is never bypassed).
       It commits through the normal pre-commit hook (gitleaks and the
@@ -198,8 +201,10 @@ What those sources establish:
 - [ ] **[shoyu, owner]** Resume Obsidian Git: command palette,
       **Obsidian Git: Pause/Resume automatic routines** ("Resumed
       automatic routines."). It pulls the merged import into `~/binnacle`.
-- [ ] **[shoyu, owner]** Delete the local branch once merged:
-      `git -C ~/binnacle branch -d import/notion-<timestamp>`.
+- [ ] **[shoyu, owner]** Confirm on GitHub that the PR is merged, then
+      delete the local branch:
+      `git -C ~/binnacle branch -D import/notion-<timestamp>` (`-D`,
+      because a squash merge makes `-d` refuse).
 
 ## F. Close the door on Notion
 

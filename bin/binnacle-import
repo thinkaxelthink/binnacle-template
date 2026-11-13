@@ -7,10 +7,12 @@
 #   start   in the vault clone (BINNACLE_DIR, default ~/binnacle): require
 #           a clean tree on main that matches origin/main, then create
 #           branch import/notion-<UTC timestamp> and record it in
-#           `git config binnacle.importBranch` (other jobs, such as a
-#           scheduled bin/binnacle-run, must not run while it is set).
+#           `git config binnacle.importBranch`, a marker that scheduled
+#           jobs (such as a future nightly bin/binnacle-run) must check
+#           before touching the clone; nothing enforces it today.
 #           Re-running while that branch is checked out changes nothing.
-#   finish  refuse if anything changed outside soundings/notion/ (lists it),
+#   finish  refuse if anything changed outside soundings/notion/ other than
+#           .obsidian/types.json (Obsidian's property types; lists the rest),
 #           or if a file there is over the 10 MB cap (lists it, for a human
 #           decision); commit through the normal pre-commit hook (gitleaks
 #           and the size cap; never --no-verify), push the branch, open a PR
@@ -45,6 +47,7 @@ MAX_BYTES=${BINNACLE_MAX_FILE_BYTES:-10485760}
 ZONE=soundings/notion
 PREFIX=import/notion-
 IMPORTER_DATA=.obsidian/plugins/obsidian-importer/data.json
+TYPES=.obsidian/types.json
 
 say() { printf 'binnacle-import: %s\n' "$*"; }
 die() {
@@ -77,7 +80,7 @@ changed_paths() { # -> NUL-separated paths
   done < <(g status --porcelain=v1 -z --untracked-files=all)
 }
 
-in_zone() { case $1 in "$ZONE"/*) return 0 ;; esac; return 1; }
+importable() { case $1 in "$ZONE"/* | "$TYPES") return 0 ;; esac; return 1; }
 
 # --- status --------------------------------------------------------------------
 if [ "$cmd" = status ]; then
@@ -87,10 +90,10 @@ if [ "$cmd" = status ]; then
   inside=0
   outside=()
   while IFS= read -r -d '' p; do
-    if in_zone "$p"; then inside=$((inside + 1)); else outside+=("$p"); fi
+    if importable "$p"; then inside=$((inside + 1)); else outside+=("$p"); fi
   done < <(changed_paths)
-  say "uncommitted:    $inside under $ZONE/, ${#outside[@]} elsewhere"
-  for p in ${outside[@]+"${outside[@]}"}; do printf '  outside %s/: %s\n' "$ZONE" "$p"; done
+  say "uncommitted:    $inside under $ZONE/ or $TYPES, ${#outside[@]} elsewhere"
+  for p in ${outside[@]+"${outside[@]}"}; do printf '  elsewhere: %s\n' "$p"; done
   if [ -n "$recorded" ]; then
     say "next:           import into $ZONE/, then bin/binnacle-import finish"
   else
@@ -152,12 +155,12 @@ base_ref=$REMOTE/$BASE
 # 1. Zone: uncommitted changes and anything already committed on the branch.
 outside=()
 while IFS= read -r -d '' p; do
-  in_zone "$p" || outside+=("$p")
+  importable "$p" || outside+=("$p")
 done < <(changed_paths; g -c core.quotePath=false diff -z --name-only "$base_ref...HEAD")
 if [ "${#outside[@]}" -gt 0 ]; then
-  printf 'binnacle-import: changes outside %s/ (nothing was committed):\n' "$ZONE" >&2
+  printf 'binnacle-import: changes outside %s/ and %s (nothing was committed):\n' "$ZONE" "$TYPES" >&2
   printf '%s\n' "${outside[@]}" | sort -u | sed 's/^/  /' >&2
-  die "only $ZONE/ may change on an import branch; move, revert or delete those paths (they may belong on $BASE), then re-run finish"
+  die "only $ZONE/ and $TYPES may change on an import branch; move, revert or delete those paths (they may belong on $BASE), then re-run finish"
 fi
 
 # 2. Size cap, before the hook, so every offender is listed at once.
@@ -175,7 +178,7 @@ fi
 
 # 3. Commit through the normal hook.
 if [ -n "$(changed_paths | tr -d '\0')" ]; then
-  g add -A -- "$ZONE"
+  g add -A
   if ! g commit --quiet -m "Import Notion slip box into $ZONE/"; then
     die "the pre-commit hook refused the commit (see its message above: gitleaks found a secret, a file is over 10 MB, or gitleaks is missing). Nothing was committed and nothing is pushed. Remove the flagged note or line from $ZONE/ (if it was a real secret, rotate it), then re-run finish. Never commit with --no-verify."
   fi
@@ -201,6 +204,7 @@ if [ "$files" -gt 0 ]; then
   bytes=$(printf 'HEAD:%s\n' "${imported[@]}" | g cat-file --batch-check='%(objectsize)' \
     | awk '{ s += $1 } END { printf "%d", s }')
 fi
+types_changed=$(g diff --name-only "$base_ref...HEAD" -- "$TYPES")
 deleted=$(g diff --name-only --diff-filter=D "$base_ref...HEAD" -- "$ZONE" | wc -l | tr -d ' ')
 mib=$(awk -v b="$bytes" 'BEGIN { printf "%.1f", b / 1048576 }')
 
@@ -242,6 +246,7 @@ if [ -z "$pr" ]; then
     printf -- '- files: **%s** (%s notes, %s attachments, %s bases)\n' "$files" "$notes" "$attachments" "$bases"
     [ "$deleted" -eq 0 ] || printf -- '- deleted: %s\n' "$deleted"
     printf -- '- total size: %s bytes (%s MiB)\n' "$bytes" "$mib"
+    [ -z "$types_changed" ] || printf -- '- also changes `%s` (Obsidian'"'"'s property types for the imported properties)\n' "$TYPES"
     printf -- '- every file passed the pre-commit hook (gitleaks, 10 MB cap); the `gitleaks` check runs on this PR too\n\n'
     printf 'Auto-merge is **not** enabled: the owner reviews and merges this PR.\n\n'
     printf '## Fidelity notes\n\n'
