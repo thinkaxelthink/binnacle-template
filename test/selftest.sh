@@ -23,7 +23,7 @@ check() { # description, command...
   if "$@" >>"$T/check.log" 2>&1; then ok "$d"; else bad "$d"; fi
 }
 
-scripts=(.githooks/pre-commit bin/binnacle-run setup/common/lib.sh setup/common/install-hooks.sh
+scripts=(.githooks/pre-commit bin/binnacle-run bin/binnacle-import setup/common/lib.sh setup/common/install-hooks.sh
   setup/github/setup.sh setup/shoyu/setup.sh setup/workmac/setup.sh test/selftest.sh)
 
 # --- static checks -------------------------------------------------------------
@@ -255,6 +255,98 @@ sleep 1
 check "run: Claude failure exits non-zero" expect_fail env STUB_CLAUDE_MODE=crash "$V/bin/binnacle-run"
 note_on_branch >"$T/note" 2>&1 || true
 check "run: Claude failure reason recorded" grep -q 'Claude Code exited with status 3' "$T/note"
+
+# --- bin/binnacle-import ------------------------------------------------------------
+reset_vault
+git -C "$V" switch -q main
+git -C "$V" pull -q --ff-only origin main
+imp() { BINNACLE_DIR=$V "$repo/bin/binnacle-import" "$@" >"$T/imp.out" 2>&1; }
+imp_branch() { git -C "$V" symbolic-ref --short HEAD; }
+marker() { git -C "$V" config --get binnacle.importBranch; }
+no_marker() { expect_fail marker; }
+: >"$T/gh.log"
+
+git -C "$V" config binnacle.role capture
+check "import: refuses on a capture-only clone" expect_fail imp start
+git -C "$V" config binnacle.role wiki-writer
+printf 'x\n' >"$V/soundings/dirty.md"
+check "import start: refuses a dirty tree" expect_fail imp start
+check "import start: dirty tree creates no branch" test "$(imp_branch)" = main
+rm -f "$V/soundings/dirty.md"
+git -C "$V" commit -q --allow-empty -m "local only"
+check "import start: refuses when main is ahead of origin" expect_fail imp start
+git -C "$V" reset -q --hard origin/main
+
+check "import start: exits 0" imp start
+check "import start: creates import/notion-<timestamp>" bash -c '[[ $(git -C "$1" symbolic-ref --short HEAD) =~ ^import/notion-[0-9]{8}T[0-9]{6}Z$ ]]' _ "$V"
+import_branch=$(imp_branch)
+check "import start: sets binnacle.importBranch" test "$(marker)" = "$import_branch"
+check "import start: re-run is a no-op" imp start
+check "import start: re-run keeps the branch" test "$(imp_branch)" = "$import_branch"
+check "import status: shows the import branch" bash -c 'BINNACLE_DIR=$1 "$2" status | grep -q "import branch: *$3"' _ "$V" "$repo/bin/binnacle-import" "$import_branch"
+
+mkdir -p "$V/soundings/notion/Slip box/attachments"
+printf -- '---\nnotion-id: abc\n---\n# Idea\nSee [[Other]].\n' >"$V/soundings/notion/Slip box/Idea.md"
+printf '# Other\n' >"$V/soundings/notion/Slip box/Other.md"
+printf 'PNGDATA' >"$V/soundings/notion/Slip box/attachments/pic.png"
+printf 'stray\n' >"$V/wiki/stray.md"
+check "import finish: refuses a change outside soundings/notion/" expect_fail imp finish
+check "import finish: names the out-of-zone path" grep -q 'wiki/stray.md' "$T/imp.out"
+check "import finish: out-of-zone refusal commits nothing" test "$(git -C "$V" rev-list --count origin/main..HEAD)" = 0
+check "import finish: refusal keeps the branch and marker" test "$(marker)" = "$import_branch"
+rm -f "$V/wiki/stray.md"
+
+head -c 2048 /dev/zero >"$V/soundings/notion/Slip box/attachments/huge.bin"
+check "import finish: stops on a file over the cap" expect_fail env BINNACLE_MAX_FILE_BYTES=1024 \
+  BINNACLE_DIR="$V" "$repo/bin/binnacle-import" finish
+BINNACLE_MAX_FILE_BYTES=1024 BINNACLE_DIR="$V" "$repo/bin/binnacle-import" finish >"$T/imp.out" 2>&1 || true
+check "import finish: lists the oversized file" grep -q 'attachments/huge.bin (2048 bytes)' "$T/imp.out"
+check "import finish: size stop commits nothing" test "$(git -C "$V" rev-list --count origin/main..HEAD)" = 0
+rm -f "$V/soundings/notion/Slip box/attachments/huge.bin"
+
+check "import finish: hook failure stops" expect_fail env BINNACLE_GITLEAKS="$T/stubs/gitleaks-fail" \
+  BINNACLE_DIR="$V" "$repo/bin/binnacle-import" finish
+check "import finish: hook failure commits and pushes nothing" bash -c \
+  'test "$(git -C "$1" rev-list --count origin/main..HEAD)" = 0 && test -z "$(git ls-remote "$2" "refs/heads/$3")"' \
+  _ "$V" "$T/remote.git" "$import_branch"
+check "import: never bypasses the hook" bash -c '! grep -Eq "^[[:space:]]*(if ! )?(g|git)( -C [^ ]+)? commit.*--no-verify" "$1"' _ "$repo/bin/binnacle-import"
+check "import finish: still on the branch after a stop" test "$(marker)" = "$import_branch"
+
+: >"$T/gh.log"
+check "import finish: exits 0" imp finish
+check "import finish: branch pushed" test -n "$(git ls-remote "$T/remote.git" "refs/heads/$import_branch")"
+check "import finish: commit holds only soundings/notion/" bash -c \
+  'test -z "$(git -C "$1" diff --name-only "origin/main...$2" | grep -v "^soundings/notion/")"' _ "$V" "$import_branch"
+check "import finish: PR opened against main" grep -q "pr create --base main --head $import_branch" "$T/gh.log"
+check "import finish: PR URL printed" grep -q 'PR: https://github.com/example/binnacle/pull/1' "$T/imp.out"
+check "import finish: counts reported" grep -q 'imported: 3 files (2 notes, 1 attachments, 0 bases)' "$T/imp.out"
+check "import finish: no auto-merge" bash -c '! grep -q "pr merge" "$1"' _ "$T/gh.log"
+check "import finish: back on main" test "$(imp_branch)" = main
+check "import finish: binnacle.importBranch unset" no_marker
+check "import finish: re-run is a no-op" imp finish
+check "import finish: re-run says nothing to finish" grep -q 'nothing to finish' "$T/imp.out"
+
+# Re-run of an interrupted finish (PR already open) whose switch back to
+# main fails (index locked): the marker stays set, and the token from the
+# file reaches gh without ever being printed.
+git -C "$V" switch -q "$import_branch"
+git -C "$V" config binnacle.importBranch "$import_branch"
+git -C "$V" config binnacle.ghTokenFile "$tokfile"
+: >"$T/token.log"
+: >"$T/gh.log"
+: >"$V/.git/index.lock"
+env -u GH_TOKEN PATH="$T/nokeychain:$PATH" STUB_GH_OPEN=1 STUB_TOKEN_LOG="$T/token.log" BINNACLE_DIR="$V" \
+  bash -x "$repo/bin/binnacle-import" finish >"$T/imp.out" 2>&1 || true
+rm -f "$V/.git/index.lock"
+check "import finish: re-run finds the open PR instead of opening another" bash -c '! grep -q "pr create" "$1"' _ "$T/gh.log"
+check "import finish: re-run never enables auto-merge" bash -c '! grep -q "pr merge" "$1"' _ "$T/gh.log"
+check "import finish: token reaches gh" grep -qx 'token=file-token-123' "$T/token.log"
+check "import finish: token never printed (even under bash -x)" bash -c '! grep -q file-token-123 "$1"' _ "$T/imp.out"
+git -C "$V" config --unset binnacle.ghTokenFile
+check "import finish: stops at the switch back to main" grep -q "could not switch" "$T/imp.out"
+check "import finish: failed switch keeps binnacle.importBranch" test "$(marker)" = "$import_branch"
+git -C "$V" config --unset binnacle.importBranch
+git -C "$V" switch -q main
 
 # --- setup scripts ---------------------------------------------------------------------
 lib=$repo/setup/common/lib.sh

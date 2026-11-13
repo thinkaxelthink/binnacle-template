@@ -1,0 +1,264 @@
+#!/usr/bin/env bash
+# binnacle-import: put a one-time Notion import on a branch and open a PR.
+# Runs only on shoyu. The human steps are in setup/notion/CHECKLIST.md.
+#
+# Usage: bin/binnacle-import start|finish|status
+#
+#   start   in the vault clone (BINNACLE_DIR, default ~/binnacle): require
+#           a clean tree on main that matches origin/main, then create
+#           branch import/notion-<UTC timestamp> and record it in
+#           `git config binnacle.importBranch` (other jobs, such as a
+#           scheduled bin/binnacle-run, must not run while it is set).
+#           Re-running while that branch is checked out changes nothing.
+#   finish  refuse if anything changed outside soundings/notion/ (lists it),
+#           or if a file there is over the 10 MB cap (lists it, for a human
+#           decision); commit through the normal pre-commit hook (gitleaks
+#           and the size cap; never --no-verify), push the branch, open a PR
+#           to main whose body counts files, attachments and size and leaves
+#           a place for fidelity notes, switch the clone back to main, and
+#           only then unset binnacle.importBranch. Auto-merge is NOT
+#           enabled: the owner reviews and merges. Safe to re-run.
+#   status  show the clone's branch, the recorded import branch and what is
+#           waiting to be committed. Changes nothing, no network.
+#
+# Env: BINNACLE_DIR (~/binnacle), BINNACLE_REMOTE (origin),
+#      BINNACLE_BASE (main), BINNACLE_GH (gh),
+#      BINNACLE_MAX_FILE_BYTES (10485760, as in .githooks/pre-commit).
+#      GH_TOKEN, if unset, comes from the same keychain item or mode-600
+#      file as bin/binnacle-run (setup/shoyu/CHECKLIST.md).
+set -eu
+
+usage() { sed -n '2,/^set -eu/p' "$0" | sed '$d; s/^# \{0,1\}//'; }
+
+cmd=${1:-}
+case $cmd in
+  start | finish | status) ;;
+  -h | --help) usage; exit 0 ;;
+  *) usage >&2; exit 2 ;;
+esac
+
+VAULT=${BINNACLE_DIR:-$HOME/binnacle}
+REMOTE=${BINNACLE_REMOTE:-origin}
+BASE=${BINNACLE_BASE:-main}
+GH=${BINNACLE_GH:-gh}
+MAX_BYTES=${BINNACLE_MAX_FILE_BYTES:-10485760}
+ZONE=soundings/notion
+PREFIX=import/notion-
+IMPORTER_DATA=.obsidian/plugins/obsidian-importer/data.json
+
+say() { printf 'binnacle-import: %s\n' "$*"; }
+die() {
+  printf 'binnacle-import: error: %s\n' "$*" >&2
+  exit 1
+}
+
+[ -d "$VAULT/.git" ] || die "no vault clone at $VAULT (set BINNACLE_DIR)"
+g() { git -C "$VAULT" "$@"; }
+
+role=$(g config --get binnacle.role || true)
+[ "$role" = wiki-writer ] \
+  || die "binnacle.role is '${role:-unset}', not wiki-writer: the import happens only on shoyu (setup/shoyu/setup.sh)"
+
+current=$(g symbolic-ref --quiet --short HEAD || echo "(detached)")
+recorded=$(g config --get binnacle.importBranch || true)
+
+# Paths with uncommitted changes (tracked or untracked, not ignored); for a
+# rename or copy both the new and the original path.
+changed_paths() { # -> NUL-separated paths
+  local e orig=0
+  while IFS= read -r -d '' e; do
+    if [ "$orig" -eq 1 ]; then
+      printf '%s\0' "$e"
+      orig=0
+      continue
+    fi
+    printf '%s\0' "${e:3}"
+    case ${e:0:2} in *R* | *C*) orig=1 ;; esac
+  done < <(g status --porcelain=v1 -z --untracked-files=all)
+}
+
+in_zone() { case $1 in "$ZONE"/*) return 0 ;; esac; return 1; }
+
+# --- status --------------------------------------------------------------------
+if [ "$cmd" = status ]; then
+  say "vault:          $VAULT"
+  say "branch:         $current"
+  say "import branch:  ${recorded:-(none)}"
+  inside=0
+  outside=()
+  while IFS= read -r -d '' p; do
+    if in_zone "$p"; then inside=$((inside + 1)); else outside+=("$p"); fi
+  done < <(changed_paths)
+  say "uncommitted:    $inside under $ZONE/, ${#outside[@]} elsewhere"
+  for p in ${outside[@]+"${outside[@]}"}; do printf '  outside %s/: %s\n' "$ZONE" "$p"; done
+  if [ -n "$recorded" ]; then
+    say "next:           import into $ZONE/, then bin/binnacle-import finish"
+  else
+    say "next:           bin/binnacle-import start"
+  fi
+  exit 0
+fi
+
+# --- start -----------------------------------------------------------------------
+if [ "$cmd" = start ]; then
+  if [ -n "$recorded" ]; then
+    [ "$current" = "$recorded" ] \
+      || die "an import is already recorded on $recorded but the clone is on $current; switch back to it (git -C $VAULT switch $recorded) or finish it first"
+    say "already started: $VAULT is on $recorded"
+    say "next: import into $ZONE/ (setup/notion/CHECKLIST.md), then bin/binnacle-import finish"
+    exit 0
+  fi
+  [ "$current" = "$BASE" ] || die "$VAULT is on $current, not $BASE; switch to $BASE first"
+  dirty=$(g status --porcelain --untracked-files=all)
+  [ -z "$dirty" ] \
+    || die "$VAULT has uncommitted changes; commit and sync them on $BASE first (Obsidian Git: Commit-and-sync), then pause Obsidian Git:
+$dirty"
+  # Importer remembers per-device settings (its secret id, local folders)
+  # in this file; it must stay out of git or every import trips the zone check.
+  if ! g check-ignore -q --no-index "$IMPORTER_DATA" \
+    || g ls-files --error-unmatch "$IMPORTER_DATA" >/dev/null 2>&1; then
+    die "$IMPORTER_DATA is not ignored in $VAULT: add the line '$IMPORTER_DATA' to its .gitignore (as in binnacle-template), git rm --cached it if tracked, commit and push on $BASE, then re-run"
+  fi
+  g fetch --quiet "$REMOTE" "$BASE" || die "could not fetch $REMOTE/$BASE"
+  local_head=$(g rev-parse HEAD)
+  remote_head=$(g rev-parse "$REMOTE/$BASE")
+  [ "$local_head" = "$remote_head" ] \
+    || die "$BASE is not the same as $REMOTE/$BASE (ahead: $(g rev-list --count "$REMOTE/$BASE..HEAD"), behind: $(g rev-list --count "HEAD..$REMOTE/$BASE")); pull or push first (Obsidian Git: Commit-and-sync), then pause Obsidian Git"
+  branch=$PREFIX$(date -u +%Y%m%dT%H%M%SZ)
+  g switch --quiet -c "$branch"
+  g config binnacle.importBranch "$branch"
+  say "started: $VAULT is on $branch (recorded in git config binnacle.importBranch)"
+  say "next: run the Notion import into $ZONE/ (setup/notion/CHECKLIST.md), then bin/binnacle-import finish"
+  exit 0
+fi
+
+# --- finish ----------------------------------------------------------------------
+if [ -z "$recorded" ]; then
+  if [ "$current" = "$BASE" ]; then
+    say "no import in progress (binnacle.importBranch is unset and $VAULT is on $BASE): nothing to finish"
+    exit 0
+  fi
+  die "binnacle.importBranch is unset and $VAULT is on $current; run bin/binnacle-import start first"
+fi
+case $recorded in "$PREFIX"*) ;; *) die "binnacle.importBranch '$recorded' does not look like $PREFIX<timestamp>" ;; esac
+branch=$recorded
+[ "$current" = "$branch" ] \
+  || die "the import branch is $branch but $VAULT is on $current; switch back to it (git -C $VAULT switch $branch) and re-run"
+
+command -v "$GH" >/dev/null 2>&1 || die "GitHub CLI ('$GH') not found"
+g fetch --quiet "$REMOTE" "$BASE" || die "could not fetch $REMOTE/$BASE"
+base_ref=$REMOTE/$BASE
+
+# 1. Zone: uncommitted changes and anything already committed on the branch.
+outside=()
+while IFS= read -r -d '' p; do
+  in_zone "$p" || outside+=("$p")
+done < <(changed_paths; g -c core.quotePath=false diff -z --name-only "$base_ref...HEAD")
+if [ "${#outside[@]}" -gt 0 ]; then
+  printf 'binnacle-import: changes outside %s/ (nothing was committed):\n' "$ZONE" >&2
+  printf '%s\n' "${outside[@]}" | sort -u | sed 's/^/  /' >&2
+  die "only $ZONE/ may change on an import branch; move, revert or delete those paths (they may belong on $BASE), then re-run finish"
+fi
+
+# 2. Size cap, before the hook, so every offender is listed at once.
+too_big=()
+while IFS= read -r -d '' p; do
+  [ -f "$VAULT/$p" ] && [ ! -L "$VAULT/$p" ] || continue
+  size=$(wc -c <"$VAULT/$p" | tr -d ' ')
+  [ "$size" -le "$MAX_BYTES" ] || too_big+=("$p ($size bytes)")
+done < <(changed_paths)
+if [ "${#too_big[@]}" -gt 0 ]; then
+  printf 'binnacle-import: files over the %s-byte cap (nothing was committed):\n' "$MAX_BYTES" >&2
+  printf '  %s\n' "${too_big[@]}" >&2
+  die "a human decides: delete each file (and its embed) from $ZONE/, or shrink it, then re-run finish; the cap is never bypassed"
+fi
+
+# 3. Commit through the normal hook.
+if [ -n "$(changed_paths | tr -d '\0')" ]; then
+  g add -A -- "$ZONE"
+  if ! g commit --quiet -m "Import Notion slip box into $ZONE/"; then
+    die "the pre-commit hook refused the commit (see its message above: gitleaks found a secret, a file is over 10 MB, or gitleaks is missing). Nothing was committed and nothing is pushed. Remove the flagged note or line from $ZONE/ (if it was a real secret, rotate it), then re-run finish. Never commit with --no-verify."
+  fi
+fi
+
+[ "$(g rev-list --count "$base_ref..HEAD")" -gt 0 ] \
+  || die "nothing imported: no changes under $ZONE/ on $branch (run the import first, see setup/notion/CHECKLIST.md)"
+
+# 4. Counts for the PR body.
+files=0 notes=0 bases=0 attachments=0
+imported=()
+while IFS= read -r -d '' p; do
+  files=$((files + 1))
+  imported+=("$p")
+  case $p in
+    *.md) notes=$((notes + 1)) ;;
+    *.base) bases=$((bases + 1)) ;;
+    *) attachments=$((attachments + 1)) ;;
+  esac
+done < <(g -c core.quotePath=false diff -z --name-only --diff-filter=AMR "$base_ref...HEAD" -- "$ZONE")
+bytes=0
+if [ "$files" -gt 0 ]; then
+  bytes=$(printf 'HEAD:%s\n' "${imported[@]}" | g cat-file --batch-check='%(objectsize)' \
+    | awk '{ s += $1 } END { printf "%d", s }')
+fi
+deleted=$(g diff --name-only --diff-filter=D "$base_ref...HEAD" -- "$ZONE" | wc -l | tr -d ' ')
+mib=$(awk -v b="$bytes" 'BEGIN { printf "%.1f", b / 1048576 }')
+
+# 5. GitHub token, never printed (same sources as bin/binnacle-run).
+case $- in *x*) xtrace=1; set +x ;; *) xtrace=0 ;; esac
+token_item=$(g config --get binnacle.ghTokenItem || echo binnacle-gh-token)
+if [ -z "${GH_TOKEN:-}" ] && command -v security >/dev/null 2>&1; then
+  if tok=$(security find-generic-password -s "$token_item" -w 2>/dev/null) && [ -n "$tok" ]; then
+    export GH_TOKEN="$tok"
+  fi
+fi
+token_file=$(g config --get binnacle.ghTokenFile || true)
+if [ -z "${GH_TOKEN:-}" ] && [ -n "$token_file" ]; then
+  [ -f "$token_file" ] && [ ! -L "$token_file" ] \
+    || die "binnacle.ghTokenFile '$token_file' is not a regular file"
+  perm=$(stat -c '%u %a' "$token_file" 2>/dev/null || stat -f '%u %Lp' "$token_file" 2>/dev/null) \
+    || die "cannot stat binnacle.ghTokenFile '$token_file'"
+  case $perm in
+    "$(id -u) 600" | "$(id -u) 400") ;;
+    *) die "refusing binnacle.ghTokenFile '$token_file': it must be owned by you with mode 600 or 400 (chmod 600 it)" ;;
+  esac
+  tok=$(tr -d '\r\n' <"$token_file")
+  [ -n "$tok" ] || die "binnacle.ghTokenFile '$token_file' is empty"
+  export GH_TOKEN="$tok"
+fi
+unset tok
+[ "$xtrace" -eq 0 ] || set -x
+
+# 6. Push and open (or find) the PR. No auto-merge.
+g push --quiet -u "$REMOTE" "$branch" || die "git push of $branch failed; fix access and re-run finish"
+cd "$VAULT" # gh finds the repository from the working directory
+pr=$("$GH" pr list --state open --head "$branch" --json url --jq '.[0].url // empty') \
+  || die "could not list PRs with $GH"
+if [ -z "$pr" ]; then
+  body=$(mktemp "${TMPDIR:-/tmp}/binnacle-import.XXXXXX")
+  # shellcheck disable=SC2016 # literal backticks: Markdown code spans
+  {
+    printf 'One-time Notion import into `%s/`, created by `bin/binnacle-import finish`.\n\n' "$ZONE"
+    printf -- '- files: **%s** (%s notes, %s attachments, %s bases)\n' "$files" "$notes" "$attachments" "$bases"
+    [ "$deleted" -eq 0 ] || printf -- '- deleted: %s\n' "$deleted"
+    printf -- '- total size: %s bytes (%s MiB)\n' "$bytes" "$mib"
+    printf -- '- every file passed the pre-commit hook (gitleaks, 10 MB cap); the `gitleaks` check runs on this PR too\n\n'
+    printf 'Auto-merge is **not** enabled: the owner reviews and merges this PR.\n\n'
+    printf '## Fidelity notes\n\n'
+    printf '_Fill in from the spot-checks in setup/notion/CHECKLIST.md (links, properties, attachments) before merging._\n\n'
+    printf -- '- links:\n- properties:\n- attachments:\n- other:\n'
+  } >"$body"
+  pr=$("$GH" pr create --base "$BASE" --head "$branch" \
+    --title "Notion import ${branch#"$PREFIX"}" --body-file "$body") \
+    || { rm -f "$body"; die "$branch is pushed but opening the PR failed; re-run finish or open it by hand"; }
+  rm -f "$body"
+  pr=$(printf '%s\n' "$pr" | tail -n 1)
+fi
+say "PR: $pr (auto-merge not enabled; review and merge it yourself)"
+say "imported: $files files ($notes notes, $attachments attachments, $bases bases), $bytes bytes"
+
+# 7. Back to main; clear the marker only once that worked.
+g switch --quiet "$BASE" || die "could not switch $VAULT back to $BASE; binnacle.importBranch stays set to $branch"
+g config --unset binnacle.importBranch
+say "done: $VAULT is on $BASE again; $branch stays local until the PR merges"
+say "next: review the PR, add fidelity notes, merge it, then resume Obsidian Git (setup/notion/CHECKLIST.md)"

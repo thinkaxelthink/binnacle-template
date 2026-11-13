@@ -20,7 +20,7 @@ contract material, or credentials, and no company system connects to it.
 |---|---|---|---|
 | `raw/inbox/` | New sources waiting for ingest. The capture point. | Any device, by hand | read only |
 | `raw/` (everything else, e.g. `raw/sources/<run-id>/`) | Ingested sources, immutable. | `bin/binnacle-run` moves files here from the inbox, byte for byte | read only |
-| `soundings/` | Hand-written notes (later also the Notion slip box). | Any device, by hand | read only, and link to them |
+| `soundings/` | Hand-written notes. `soundings/notion/` holds the Notion slip box, imported once (`setup/notion/`); same rules. | Any device, by hand; `soundings/notion/` by the owner's import PR | read only, and link to them |
 | `wiki/` | The wiki: pages, `index.md`, `log.md`. | Claude Code on shoyu only | read and write |
 | `audit/` | One note per AI run, plus the `runs.base` table. | `bin/binnacle-run` and Claude Code on shoyu | write only the lint section of the current run's note |
 | everything else (`CLAUDE.md`, `bin/`, `setup/`, `.github/`, `.obsidian/`, ...) | Template machinery. | The human | read only |
