@@ -11,9 +11,11 @@
 # brain (never ~/binnacle), any existing origin must be this URL, the
 # repository must be reachable and hold nothing but this brain's own
 # history, and when gh can see it, it must be private. Afterwards it checks
-# the org's base repository permission and warns, with the fix, when org
-# members could read the repository. Create the empty private repository
-# first (setup/work-brain/CHECKLIST.md, "Connect a remote").
+# the org's base repository permission and the org's GitHub App
+# installations, and warns, with the fix, when org members or an app
+# installed on all repositories could read the repository. Create the empty
+# private repository first (setup/work-brain/CHECKLIST.md, "Connect a
+# remote").
 # Env: BINNACLE_GH (gh).
 set -eu
 
@@ -110,5 +112,6 @@ git -C "$vault" config --unset binnacle.localOnly || true
 bn_ok "binnacle.localOnly unset: bin/binnacle-run now pushes run branches and opens PRs"
 
 wb_base_permission "$org"
+wb_app_installations "$org"
 
 bn_log "connected. Finish the repository settings and token: $vault/setup/work-brain/CHECKLIST.md, 'Connect a remote'"
