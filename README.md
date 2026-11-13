@@ -22,7 +22,7 @@ itself once the secret scan passes. Every run leaves an audit note.
 |---|---|---|
 | `raw/inbox/` | New sources: the capture point | Any device, by hand |
 | `raw/sources/<run-id>/` | Ingested sources, immutable | `bin/binnacle-run` (moved from the inbox, unchanged) |
-| `soundings/` | Hand-written notes; later the Notion slip box | Any device, by hand. The LLM reads, never edits |
+| `soundings/` | Hand-written notes; `soundings/notion/` is the Notion slip box, imported once | Any device, by hand (`soundings/notion/` via the import PR). The LLM reads, never edits |
 | `wiki/` | The wiki, with `index.md` and `log.md` | Claude Code on shoyu only, via PR |
 | `audit/` | One note per AI run, and `runs.base` (an Obsidian Bases table of all runs) | `bin/binnacle-run` on shoyu, via PR |
 | `CLAUDE.md` | The schema the LLM follows, including these zones | The human |
@@ -111,12 +111,17 @@ test/selftest.sh
 Syntax-checks every script, runs shellcheck when installed, and exercises
 the hook (size cap, gitleaks failure, fail closed) and `bin/binnacle-run`
 (empty inbox, dry run, a full run and a zone violation, with stubbed
-`claude` and `gh`) against throwaway repositories. CI runs it on changes
+`claude` and `gh`) and `bin/binnacle-import` (branch creation, the import
+marker, out-of-zone refusal, size-cap stop, no auto-merge) against
+throwaway repositories. CI runs it on changes
 to scripts (`.github/workflows/selftest.yml`).
 
 ## Roadmap
 
-- **Version 2: Notion import.** Bring the Notion slip box into `soundings/`
-  (read-only to the LLM like the rest of `soundings/`). Not built yet.
+- **Version 2: Notion import.** Available: `setup/notion/CHECKLIST.md`
+  and `bin/binnacle-import` bring the Notion slip box into
+  `soundings/notion/` once, through a reviewed PR (read-only to the LLM
+  like the rest of `soundings/`), then Notion is frozen. The wiki ingests
+  those notes later, in batches.
 - **Version 2: nightly runs.** Schedule `bin/binnacle-run` nightly on
   shoyu. Not built yet; run it on demand until then.

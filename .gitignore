@@ -9,6 +9,9 @@
 .obsidian/**/cache/
 # Obsidian Git plugin settings are per device and may hold credentials.
 .obsidian/plugins/obsidian-git/data.json
+# Importer settings are per device: the id of a secret kept in this device's
+# Obsidian keychain, and local folder paths (setup/notion/CHECKLIST.md).
+.obsidian/plugins/obsidian-importer/data.json
 # Anything else that looks like it carries a credential.
 .obsidian/**/*token*
 .obsidian/**/*secret*
