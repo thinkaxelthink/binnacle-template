@@ -1,0 +1,380 @@
+#!/usr/bin/env bash
+# binnacle-run: one AI run over raw/inbox. Runs only on shoyu.
+#
+# Usage: bin/binnacle-run [--dry-run]
+#
+#   empty raw/inbox on origin/main -> say so, exit 0: no branch, no PR.
+#   otherwise, in a temporary worktree (your ~/binnacle checkout and
+#   Obsidian are never switched off main):
+#     1. branch binnacle-run/<run-id> from origin/main
+#     2. move raw/inbox/* to raw/sources/<run-id>/ (content unchanged)
+#     3. Claude Code, headless, with bin/binnacle-run.prompt.md: ingest the
+#        sources per CLAUDE.md, flag-only lint, append wiki/log.md, fill the
+#        lint section of audit/runs/<run-id>.md
+#     4. zone guard: anything changed outside wiki/ and audit/ is reverted
+#        and fails the run; wiki/log.md must only have been appended to
+#     5. write the audit note, commit, push, open a PR, enable auto-merge
+#        (GitHub merges once the gitleaks check passes)
+#   On failure the PR stays open without auto-merge and the audit note says
+#   why. Nothing retries. A new run refuses while a run PR is still open.
+#
+#   --dry-run  report what would happen; no fetch, no branch, no Claude, no
+#              GitHub calls.
+#
+# Env: BINNACLE_REMOTE (origin), BINNACLE_BASE (main),
+#      BINNACLE_CLAUDE (claude), BINNACLE_CLAUDE_ARGS (extra args, e.g. --model x),
+#      BINNACLE_GH (gh). GH_TOKEN, if unset, is read from the macOS keychain
+#      item named by `git config binnacle.ghTokenItem` (default
+#      binnacle-gh-token) when present (setup/shoyu/CHECKLIST.md).
+set -eu
+
+usage() { sed -n '2,/^set -eu/p' "$0" | sed '$d; s/^# \{0,1\}//'; }
+
+dry=0
+case "${1:-}" in
+  --dry-run) dry=1 ;;
+  -h | --help) usage; exit 0 ;;
+  "") ;;
+  *) usage >&2; exit 2 ;;
+esac
+
+REMOTE=${BINNACLE_REMOTE:-origin}
+BASE=${BINNACLE_BASE:-main}
+CLAUDE=${BINNACLE_CLAUDE:-claude}
+GH=${BINNACLE_GH:-gh}
+CLAUDE_ARGS=${BINNACLE_CLAUDE_ARGS:-}
+INBOX=raw/inbox
+LLM_BEGIN='<!-- binnacle:llm-begin -->'
+LLM_END='<!-- binnacle:llm-end -->'
+
+say() { printf 'binnacle-run: %s\n' "$*"; }
+die() {
+  printf 'binnacle-run: error: %s\n' "$*" >&2
+  exit 1
+}
+
+here=$(cd "$(dirname "$0")" && pwd -P)
+root=$(git -C "$here/.." rev-parse --show-toplevel)
+cd "$root" # gh finds the repository from the working directory
+prompt_file=$root/bin/binnacle-run.prompt.md
+
+# --- preflight ---------------------------------------------------------------
+role=$(git -C "$root" config --get binnacle.role || true)
+[ "$role" = wiki-writer ] \
+  || die "binnacle.role is '${role:-unset}', not wiki-writer: AI runs happen only on shoyu (setup/shoyu/setup.sh)"
+[ -f "$prompt_file" ] || die "missing prompt file $prompt_file"
+
+if [ "$dry" -eq 1 ]; then
+  base_ref=$REMOTE/$BASE
+  git -C "$root" rev-parse --verify -q "$base_ref^{commit}" >/dev/null || base_ref=$BASE
+else
+  command -v "$CLAUDE" >/dev/null 2>&1 || die "Claude Code ('$CLAUDE') not found"
+  command -v "$GH" >/dev/null 2>&1 || die "GitHub CLI ('$GH') not found"
+  git -C "$root" fetch --quiet "$REMOTE" "$BASE"
+  base_ref=$REMOTE/$BASE
+fi
+
+# --- inbox -------------------------------------------------------------------
+sources=()
+while IFS= read -r -d '' f; do
+  case "${f##*/}" in .gitkeep | .DS_Store) continue ;; esac
+  sources+=("$f")
+done < <(git -C "$root" ls-tree -r -z --name-only "$base_ref" -- "$INBOX/")
+
+if [ "${#sources[@]}" -eq 0 ]; then
+  say "$INBOX is empty on $base_ref: nothing to do (no branch, no PR)"
+  exit 0
+fi
+
+run_id=$(date -u +%Y%m%dT%H%M%SZ)
+day=$(date -u +%Y-%m-%d)
+branch=binnacle-run/$run_id
+dest=raw/sources/$run_id
+note=audit/runs/$run_id.md
+
+if [ "$dry" -eq 1 ]; then
+  say "dry run - nothing will be changed"
+  say "base:   $base_ref"
+  say "branch: $branch (in a temporary worktree)"
+  say "${#sources[@]} source(s) would move to $dest/:"
+  for f in "${sources[@]}"; do printf '  %s\n' "$f"; done
+  say "Claude: $CLAUDE -p <bin/binnacle-run.prompt.md> --permission-mode acceptEdits --disallowedTools Bash,WebFetch,WebSearch $CLAUDE_ARGS"
+  say "audit:  $note"
+  say "then:   zone guard, commit, push, PR to $BASE, $GH pr merge --auto --squash"
+  exit 0
+fi
+
+token_item=$(git -C "$root" config --get binnacle.ghTokenItem || echo binnacle-gh-token)
+if [ -z "${GH_TOKEN:-}" ] && command -v security >/dev/null 2>&1; then
+  if tok=$(security find-generic-password -s "$token_item" -w 2>/dev/null) && [ -n "$tok" ]; then
+    export GH_TOKEN="$tok"
+  fi
+fi
+
+open_prs=$("$GH" pr list --state open --base "$BASE" --json headRefName,url \
+  --jq '.[] | select(.headRefName | startswith("binnacle-run/")) | .url') \
+  || die "could not list open PRs with $GH"
+[ -z "$open_prs" ] \
+  || die "a run PR is still open: $open_prs - merge or close it first (runs never retry on their own)"
+
+# --- worktree ----------------------------------------------------------------
+tmp=${TMPDIR:-/tmp}
+work=$(mktemp -d "${tmp%/}/binnacle-run.XXXXXX")
+wt=$work/vault
+log=$work/claude.log
+finished=0
+# shellcheck disable=SC2329 # called by the EXIT trap
+on_exit() {
+  if [ "$finished" -eq 0 ]; then
+    printf 'binnacle-run: stopped early; worktree kept at %s (log %s)\n' "$wt" "$log" >&2
+  fi
+}
+trap on_exit EXIT
+
+git -C "$root" worktree add --quiet -b "$branch" "$wt" "$base_ref"
+cd "$wt"
+say "run $run_id: ${#sources[@]} source(s), branch $branch"
+
+moved=()
+for f in "${sources[@]}"; do
+  to=$dest/${f#"$INBOX"/}
+  mkdir -p "$(dirname "$to")"
+  git mv "$f" "$to"
+  moved+=("$to")
+done
+git commit --quiet -m "run $run_id: file ${#moved[@]} source(s) from $INBOX" \
+  || die "could not commit the source move (pre-commit hook?); nothing pushed"
+
+# Notes already on main can only have arrived by merging their PR.
+reconciled=0
+for n in audit/runs/*.md; do
+  [ -f "$n" ] || continue
+  if grep -Eq '^merged: (pending|false)$' "$n"; then
+    awk '!done && /^merged: (pending|false)$/ { print "merged: true"; done = 1; next } { print }' "$n" >"$n.tmp"
+    mv "$n.tmp" "$n"
+    reconciled=$((reconciled + 1))
+  fi
+done
+if [ "$reconciled" -gt 0 ]; then
+  git add audit/runs
+  git commit --quiet -m "run $run_id: mark $reconciled earlier run(s) merged"
+fi
+
+# --- audit note --------------------------------------------------------------
+yaml_str() { printf '"%s"' "$(printf '%s' "$1" | tr '\n' ' ' | sed 's/\\/\\\\/g; s/"/\\"/g')"; }
+
+# Wikilink target: wiki pages without .md (CLAUDE.md), raw files as they are.
+link_target() { case $1 in wiki/*.md) printf '%s' "${1%.md}" ;; *) printf '%s' "$1" ;; esac; }
+
+yaml_links() { # key, then paths
+  local key=$1 p
+  shift
+  if [ "$#" -eq 0 ]; then
+    printf '%s: []\n' "$key"
+    return
+  fi
+  printf '%s:\n' "$key"
+  for p in "$@"; do printf '  - %s\n' "$(yaml_str "[[$(link_target "$p")]]")"; done
+}
+
+md_links() { # paths
+  local p
+  if [ "$#" -eq 0 ]; then
+    printf -- '- (none)\n'
+    return
+  fi
+  for p in "$@"; do printf -- '- [[%s]]\n' "$(link_target "$p")"; done
+}
+
+default_llm_region() {
+  printf '%s\n## Lint flags\n\n## Ingest notes\n\n%s\n' "$LLM_BEGIN" "$LLM_END"
+}
+
+# write_note STATUS REASON PR MERGED LLM_REGION_FILE
+created=()
+changed=()
+deleted=()
+write_note() {
+  local status=$1 reason=$2 pr=$3 merged=$4 region=$5 flags
+  flags=$(grep -cE '^- \*\*(contradiction|orphan|stale)\*\*' "$region" || true)
+  {
+    printf -- '---\ntype: binnacle-run\nrun_id: %s\ndate: %s\nstatus: %s\n' "$run_id" "$day" "$status"
+    yaml_links sources "${moved[@]}"
+    yaml_links pages ${created[@]+"${created[@]}"} ${changed[@]+"${changed[@]}"}
+    printf 'lint_flags: %s\npr: %s\nmerged: %s\nreason: %s\n---\n\n' \
+      "$flags" "$(yaml_str "$pr")" "$merged" "$(yaml_str "$reason")"
+    printf '# Run %s\n\n## Sources\n\n' "$run_id"
+    md_links "${moved[@]}"
+    printf '\n## Pages\n\nCreated:\n\n'
+    md_links ${created[@]+"${created[@]}"}
+    printf '\nChanged:\n\n'
+    md_links ${changed[@]+"${changed[@]}"}
+    if [ "${#deleted[@]}" -gt 0 ]; then
+      printf '\nDeleted:\n\n'
+      printf -- '- %s\n' "${deleted[@]}"
+    fi
+    printf '\n## Outcome\n\n- status: %s\n' "$status"
+    [ -z "$reason" ] || printf -- '- reason: %s\n' "$reason"
+    printf -- '- PR: %s\n- merged: %s\n\n' "${pr:-(not opened yet)}" "$merged"
+    cat "$region"
+  } >"$note"
+}
+
+region=$work/llm-region.md
+default_llm_region >"$region"
+write_note running "" "" false "$region"
+
+# --- Claude ------------------------------------------------------------------
+source_list=$(printf -- '- %s\n' "${moved[@]}")
+prompt=$(BN_RUN_ID=$run_id BN_DATE=$day BN_SOURCES=$source_list BN_NOTE=$note BN_BRANCH=$branch awk '
+  function rep(s, k, v,   i, out) {
+    out = ""
+    while ((i = index(s, k)) > 0) { out = out substr(s, 1, i - 1) v; s = substr(s, i + length(k)) }
+    return out s
+  }
+  {
+    line = rep($0, "{{RUN_ID}}", ENVIRON["BN_RUN_ID"])
+    line = rep(line, "{{DATE}}", ENVIRON["BN_DATE"])
+    line = rep(line, "{{SOURCES}}", ENVIRON["BN_SOURCES"])
+    line = rep(line, "{{AUDIT_NOTE}}", ENVIRON["BN_NOTE"])
+    line = rep(line, "{{BRANCH}}", ENVIRON["BN_BRANCH"])
+    print line
+  }' "$prompt_file")
+
+status=ok
+reason=""
+fail() {
+  status=failed
+  reason="${reason:+$reason; }$*"
+}
+
+say "running Claude Code (log: $log)"
+# shellcheck disable=SC2086 # CLAUDE_ARGS is deliberately word-split
+if "$CLAUDE" -p "$prompt" --permission-mode acceptEdits \
+  --disallowedTools "Bash,WebFetch,WebSearch" $CLAUDE_ARGS >"$log" 2>&1; then
+  :
+else
+  fail "Claude Code exited with status $? (log on shoyu: $log)"
+fi
+
+# --- zone guard ----------------------------------------------------------------
+violations=()
+while IFS= read -r -d '' p; do
+  case "$p" in wiki/* | audit/*) continue ;; esac
+  violations+=("$p")
+done < <(git diff -z --name-only HEAD; git ls-files -z --others --exclude-standard)
+
+if [ "${#violations[@]}" -gt 0 ]; then
+  for p in "${violations[@]}"; do
+    if git cat-file -e "HEAD:$p" 2>/dev/null; then
+      git checkout --quiet HEAD -- "$p"
+    else
+      rm -f -- "$p"
+    fi
+  done
+  fail "zone violation, reverted changes outside wiki/ and audit/: ${violations[*]}"
+fi
+
+if [ "$status" = ok ]; then
+  if ! git cat-file -e HEAD:wiki/log.md 2>/dev/null || [ ! -f wiki/log.md ]; then
+    fail "wiki/log.md is missing"
+  else
+    old_size=$(git cat-file -s HEAD:wiki/log.md)
+    new_size=$(wc -c <wiki/log.md | tr -d ' ')
+    if [ "$new_size" -le "$old_size" ] \
+      || ! head -c "$old_size" wiki/log.md | cmp -s - <(git show HEAD:wiki/log.md); then
+      fail "wiki/log.md was not appended to (it is append-only and every run adds an entry)"
+    fi
+  fi
+fi
+
+# Recover the LLM-owned part of the audit note.
+if [ -f "$note" ] && grep -qF "$LLM_BEGIN" "$note" && grep -qF "$LLM_END" "$note"; then
+  awk -v b="$LLM_BEGIN" -v e="$LLM_END" 'index($0, b) { on = 1 } on { print } index($0, e) { exit }' \
+    "$note" >"$region"
+else
+  default_llm_region >"$region"
+  fail "the lint section of $note was removed"
+fi
+
+collect_pages() {
+  created=()
+  changed=()
+  deleted=()
+  local p
+  while IFS= read -r -d '' p; do created+=("$p"); done < <(git ls-files -z --others --exclude-standard -- wiki)
+  while IFS= read -r -d '' p; do changed+=("$p"); done < <(git diff -z --name-only --diff-filter=M HEAD -- wiki)
+  while IFS= read -r -d '' p; do deleted+=("$p"); done < <(git diff -z --name-only --diff-filter=D HEAD -- wiki)
+}
+collect_pages
+
+# --- commit, push, PR ---------------------------------------------------------
+merged_state() { if [ "$status" = ok ]; then echo pending; else echo false; fi; }
+
+write_note "$status" "$reason" "" false "$region"
+git add -A -- wiki audit
+if ! git commit --quiet -m "run $run_id: ingest ${#moved[@]} source(s) ($status)"; then
+  # Most likely the pre-commit hook found a secret in Claude's output.
+  git reset --quiet
+  git checkout --quiet HEAD -- wiki
+  git clean -fdq -- wiki
+  collect_pages
+  fail "pre-commit hook rejected the wiki changes (secret or >10 MB file); they were discarded"
+  write_note "$status" "$reason" "" false "$region"
+  git add -A -- audit
+  git commit --quiet -m "run $run_id: failed" \
+    || die "could not commit the failure note either; worktree kept at $wt"
+fi
+
+git push --quiet -u "$REMOTE" "$branch" || die "git push failed; worktree kept at $wt"
+
+body=$work/pr-body.md
+# shellcheck disable=SC2016 # literal backticks: Markdown code spans
+{
+  printf 'Binnacle AI run `%s`, created by bin/binnacle-run.\n\n' "$run_id"
+  printf -- '- status: **%s**\n' "$status"
+  [ -z "$reason" ] || printf -- '- reason: %s\n' "$reason"
+  printf -- '- sources: %s\n- pages created: %s, changed: %s\n- audit note: `%s`\n' \
+    "${#moved[@]}" "${#created[@]}" "${#changed[@]}" "$note"
+  if [ "$status" = ok ]; then
+    printf '\nAuto-merge (squash) is enabled; GitHub merges once the gitleaks check passes.\n'
+  else
+    printf '\nThis run failed. The PR stays open without auto-merge; nothing retries.\n'
+    printf 'Fix it on this branch and merge by hand, or close it, before the next run.\n'
+  fi
+} >"$body"
+title="binnacle run $run_id"
+[ "$status" = ok ] || title="$title (failed)"
+pr=$("$GH" pr create --base "$BASE" --head "$branch" --title "$title" --body-file "$body") \
+  || die "branch $branch is pushed but opening the PR failed; open it by hand"
+pr=$(printf '%s\n' "$pr" | tail -n 1)
+say "PR: $pr"
+
+write_note "$status" "$reason" "$pr" "$(merged_state)" "$region"
+git add -- "$note"
+git commit --quiet -m "run $run_id: record PR link"
+git push --quiet "$REMOTE" "$branch" || die "could not push the PR link; worktree kept at $wt"
+
+if [ "$status" = ok ]; then
+  if ! out=$("$GH" pr merge "$pr" --auto --squash 2>&1); then
+    fail "could not enable auto-merge: $(printf '%s' "$out" | tr '\n' ' ')"
+    write_note "$status" "$reason" "$pr" false "$region"
+    git add -- "$note"
+    git commit --quiet -m "run $run_id: auto-merge failed"
+    git push --quiet "$REMOTE" "$branch" || die "could not push the failure note; worktree kept at $wt"
+  fi
+fi
+
+# --- clean up ------------------------------------------------------------------
+cd "$root"
+git worktree remove --force "$wt"
+git branch --quiet -D "$branch"
+finished=1
+
+if [ "$status" = ok ]; then
+  say "done: $pr (auto-merge on; merges when the scan passes)"
+  exit 0
+fi
+say "FAILED: $reason"
+say "PR left open without auto-merge: $pr"
+exit 1

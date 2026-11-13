@@ -1,0 +1,11 @@
+# gitleaks configuration shared by the pre-commit hook (.githooks/pre-commit)
+# and the GitHub Action (.github/workflows/secret-scan.yml).
+#
+# Start from gitleaks' built-in rule set, which already covers GitHub
+# classic and fine-grained tokens, cloud keys, private keys and so on.
+# To accept a reviewed false positive, add its fingerprint to
+# .gitleaksignore instead of weakening the rules here.
+title = "binnacle"
+
+[extend]
+useDefault = true

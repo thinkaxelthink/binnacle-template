@@ -1,0 +1,35 @@
+# Runs test/selftest.sh (syntax, shellcheck, hook and bin/binnacle-run
+# checks against throwaway repos) when the scripts change.
+name: selftest
+
+on:
+  push:
+    paths:
+      - ".githooks/**"
+      - "bin/**"
+      - "setup/**"
+      - "test/**"
+      - ".gitleaks.toml"
+      - ".shellcheckrc"
+      - ".github/workflows/selftest.yml"
+  pull_request:
+    paths:
+      - ".githooks/**"
+      - "bin/**"
+      - "setup/**"
+      - "test/**"
+      - ".gitleaks.toml"
+      - ".shellcheckrc"
+      - ".github/workflows/selftest.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  selftest:
+    name: selftest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Self-test
+        run: test/selftest.sh
