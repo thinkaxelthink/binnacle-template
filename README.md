@@ -11,10 +11,10 @@ connects to it.
 
 ## How it works
 
-You capture sources and write notes on any device. On demand, on shoyu,
-`bin/binnacle-run` has Claude Code read new sources into a cross-linked
-wiki, flag problems, and propose the change as a pull request that merges
-itself once the secret scan passes. Every run leaves an audit note.
+You capture sources and write notes on any device. On demand (or nightly,
+once scheduled), on shoyu, `bin/binnacle-run` has Claude Code read new
+sources into a cross-linked wiki, flag problems, and propose the change as
+a pull request that merges itself once the secret scan passes. Every run leaves an audit note.
 
 ## Zones
 
@@ -60,7 +60,13 @@ Code (prompt: `bin/binnacle-run.prompt.md`), flag-only lint
 (contradictions, orphans, stale claims), append `wiki/log.md`, write
 `audit/runs/<run-id>.md`, push, open a PR, enable auto-merge. A failure
 leaves the PR open without auto-merge and the audit note says why. Nothing
-retries, and a new run refuses while a run PR is open.
+retries, and a new run refuses while a run PR is open. A run also skips
+(exit 0, no branch, no PR) while a Notion import is in progress or another
+run is still going.
+
+Nightly runs on shoyu are a LaunchAgent that `setup/shoyu/nightly.sh
+install` adds once the owner approves the time (default 03:30); nothing is
+scheduled until then (`setup/shoyu/CHECKLIST.md`, "Nightly runs").
 
 ## Setup order
 
@@ -110,9 +116,11 @@ test/selftest.sh
 
 Syntax-checks every script, runs shellcheck when installed, and exercises
 the hook (size cap, gitleaks failure, fail closed) and `bin/binnacle-run`
-(empty inbox, dry run, a full run and a zone violation, with stubbed
-`claude` and `gh`) and `bin/binnacle-import` (branch creation, the import
-marker, out-of-zone refusal, size-cap stop, no auto-merge) against
+(empty inbox, dry run, import and overlap skips, a full run and a zone
+violation, with stubbed `claude` and `gh`), `bin/binnacle-import` (branch
+creation, the import marker, out-of-zone refusal, size-cap stop, no
+auto-merge), plus `bin/binnacle-nightly` and `setup/shoyu/nightly.sh`
+(stubbed `binnacle-run` and `launchctl`), against
 throwaway repositories. CI runs it on changes
 to scripts (`.github/workflows/selftest.yml`).
 
@@ -123,5 +131,5 @@ to scripts (`.github/workflows/selftest.yml`).
   `soundings/notion/` once, through a reviewed PR (read-only to the LLM
   like the rest of `soundings/`), then Notion is frozen. The wiki ingests
   those notes later, in batches.
-- **Version 2: nightly runs.** Schedule `bin/binnacle-run` nightly on
-  shoyu. Not built yet; run it on demand until then.
+- **Version 2: nightly runs.** Built: `setup/shoyu/nightly.sh` schedules
+  `bin/binnacle-run` nightly on shoyu. Off until the owner installs it.
