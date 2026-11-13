@@ -141,9 +141,19 @@ def decode(data):
 def read_csv(path):
     with open(path, "rb") as f:
         text = decode(f.read())
-    first = text.split("\n", 1)[0]
-    delim = max([",", ";", "\t"], key=first.count)
-    if first.count(delim) == 0:
+    counts = {",": 0, ";": 0, "\t": 0}
+    quoted = False
+    for ch in text:
+        if ch == '"':
+            quoted = not quoted
+        elif quoted:
+            continue
+        elif ch in counts:
+            counts[ch] += 1
+        elif ch in "\r\n":
+            break
+    delim = max([",", ";", "\t"], key=counts.get)
+    if counts[delim] == 0:
         delim = ","
     return [row for row in csv.reader(io.StringIO(text, newline=""), delimiter=delim)]
 
@@ -196,15 +206,15 @@ def detect_platform(headers):
 # --- dates -----------------------------------------------------------------
 
 ISO_DATE = re.compile(r"^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:$|[ T])")
-LOCAL_DATE = re.compile(r"^(\d{1,2})([/.])(\d{1,2})[/.](\d{2,4})(?:$|[ ,])")
+LOCAL_DATE = re.compile(r"^(\d{1,2})[/.](\d{1,2})[/.](\d{2,4})(?:$|[ ,])")
 SERIAL = re.compile(r"^\d{5}(?:\.\d+)?$")
 
 
-def parse_dates(values):
+def parse_dates(values, order=None):
     """Dates of the given timestamp strings, or None when one cannot be read.
 
-    Day and month order for d/m/y forms: month first unless a first number
-    is over 12 (a dot separator defaults to day first)."""
+    Day and month order for d/m/y forms: ORDER (dmy or mdy) when given, else
+    told from a number over 12; refused when the data cannot tell."""
     out, local = [], []
     for v in values:
         v = v.strip()
@@ -219,16 +229,19 @@ def parse_dates(values):
         m = LOCAL_DATE.match(v)
         if not m:
             return None
-        y = int(m.group(4))
-        local.append((int(m.group(1)), int(m.group(3)), y + 2000 if y < 100 else y, m.group(2)))
+        y = int(m.group(3))
+        local.append((int(m.group(1)), int(m.group(2)), y + 2000 if y < 100 else y))
     if local:
-        day_first = any(a > 12 for a, _, _, _ in local)
-        month_first = any(b > 12 for _, b, _, _ in local)
+        day_first = any(a > 12 for a, _, _ in local)
+        month_first = any(b > 12 for _, b, _ in local)
         if day_first and month_first:
             return None
-        if not day_first and not month_first:
-            day_first = all(sep == "." for _, _, _, sep in local)
-        for a, b, y, _ in local:
+        if order:
+            day_first = order == "dmy"
+        elif not day_first and not month_first:
+            raise Stop("cannot tell day from month in the response dates; pass --date-order dmy or mdy, "
+                       "or --from and --to (YYYY-MM-DD)", 2)
+        for a, b, y in local:
             out.append((y, b, a) if day_first else (y, a, b))
     try:
         return [datetime.date(*t) for t in out]
@@ -275,10 +288,22 @@ def is_card(s):
 
 
 def word_pattern(terms):
+    """Whole-word matches of the terms, the longest at every start (overlaps
+    included), as group 1."""
     terms = sorted({t for t in terms if t}, key=len, reverse=True)
     if not terms:
         return None
-    return re.compile(r"(?<!\w)(?:%s)(?!\w)" % "|".join(re.escape(t) for t in terms), re.IGNORECASE)
+    return re.compile(r"(?<!\w)(?=(%s)(?!\w))" % "|".join(re.escape(t) for t in terms), re.IGNORECASE)
+
+
+def stop_hit(text, stop, subject):
+    """A stop-list match not wholly inside a match of the subject's name."""
+    spans = [m.span(1) for m in subject.finditer(text)] if subject is not None else []
+    for m in stop.finditer(text):
+        s, e = m.span(1)
+        if not any(a <= s and e <= b for a, b in spans):
+            return True
+    return False
 
 
 def classes_in(text, stop, subject):
@@ -292,10 +317,8 @@ def classes_in(text, stop, subject):
         if any(not is_card(m.group(0)) for m in p.finditer(text)):
             found.append("phone")
             break
-    if stop is not None:
-        masked = subject.sub(" ", text) if subject is not None else text
-        if stop.search(masked):
-            found.append("stop-list")
+    if stop is not None and stop_hit(text, stop, subject):
+        found.append("stop-list")
     return found
 
 
@@ -435,6 +458,7 @@ def parse_args(argv):
     p.add_argument("--invited", type=int)
     p.add_argument("--from", dest="date_from")
     p.add_argument("--to", dest="date_to")
+    p.add_argument("--date-order", choices=["dmy", "mdy"])
     p.add_argument("--vault")
     p.add_argument("--stop-list")
     return p.parse_args(argv)
@@ -485,7 +509,7 @@ def main(argv):
         tcol = next((low.index(c) for c in TIME_COLUMNS if c in low), None)
         dates = None
         if tcol is not None:
-            dates = parse_dates([cells[tcol] for _, _, cells in rows if cells[tcol].strip()])
+            dates = parse_dates([cells[tcol] for _, _, cells in rows if cells[tcol].strip()], a.date_order)
         if not dates:
             raise Stop("cannot read the response timestamps; pass --from and --to (YYYY-MM-DD)", 2)
         d_from = d_from or min(dates)

@@ -5,7 +5,8 @@ Brings Microsoft Forms survey responses into a work brain
 collection window. A Power Automate flow writes each response as a small
 CSV file into a OneDrive folder synced to the work machine; when a window
 closes, you run `setup/forms/mover.sh`, which converts those files with
-`bin/binnacle-forms-to-inbox` into `raw/inbox/forms/` and deletes them.
+`bin/binnacle-forms-to-inbox` into `raw/inbox/forms/` and keeps them in a
+`processed/` folder beside them until you purge them.
 Nothing is committed for you: you review the note, then commit it, and
 the pre-commit secret scan runs as usual.
 
@@ -97,7 +98,12 @@ policies (HR, privacy, retention); they win over this checklist.
       ```
 
       Add `subject=<their name>` only for a survey about one person.
-      `platform` defaults to `msforms`.
+      `platform` defaults to `msforms`. Optional: `from=` and `to=`
+      (YYYY-MM-DD) declare the window instead of taking it from the
+      response dates; `date_order=dmy` or `date_order=mdy` says how to
+      read dates like `05/11/2026`. The converter refuses such dates when
+      no day or month in them is over 12 and neither is set; it never
+      guesses.
 - [ ] **[work machine, human]** Write the stop-list,
       `~/binnacle-acme-engineering-jdoe/.binnacle/forms-stoplist`: one term
       per line (`#` starts a comment), matched as whole words, any case.
@@ -119,20 +125,33 @@ has closed.
       ~/binnacle-acme-engineering-jdoe/setup/forms/mover.sh team-pulse # one form
       ```
 
-      For each form it converts all the waiting `.csv` files into one note,
-      `raw/inbox/forms/form-<hash>-<from>-to-<to>.md`, and deletes exactly
-      those files once the note is written. Running it again for the same
-      window replaces that note only.
+      For each form with new `.csv` files it rebuilds the window's one
+      note, `raw/inbox/forms/form-<hash>-<from>-to-<to>.md`, from the new
+      files and every earlier export of the window, then moves the new
+      files to `Binnacle forms/processed/<form>/`. Nothing is deleted, so
+      responses that sync late are not lost: run the mover again and the
+      note is rebuilt complete; if its window changed, the mover removes
+      the note it replaces, so the inbox keeps one note per form and window.
 - [ ] **[work machine, human]** If the converter refused a form, it names
       the pattern class (email, phone, card, stop-list) and the column and
       row, never the value; the files stay. Remove the value from that
-      response's `.csv` file (your own copy), or delete the response in
-      Forms and its file, then run the mover again.
+      response's `.csv` file (your own copy, in the form's folder or in
+      `processed/<form>/`), or delete the response in Forms and its file,
+      then run the mover again.
 - [ ] **[work machine, human]** Read the note. Then commit it (Obsidian
       Git, or `git add raw/inbox/forms` and `git commit`); the pre-commit
       secret scan runs. Then `bin/binnacle-run` as usual.
+- [ ] **[work machine, human]** Once `bin/binnacle-run` has ingested the
+      note, delete the window's exports before the next window opens
+      (otherwise the mover refuses the form, so windows never mix):
+
+      ```sh
+      ~/binnacle-acme-engineering-jdoe/setup/forms/mover.sh --purge team-pulse
+      ```
+
 - [ ] **[browser, human]** Delete the window's responses in Microsoft Forms
-      when your employer's retention policy allows, and reopen the form for
+      when your employer's retention policy allows (the note's
+      `retention_review` date is your reminder), and reopen the form for
       the next window.
 
 ## Surveys about your direct reports (optional)
@@ -165,4 +184,5 @@ converter by hand on the Mac where you capture:
   --consent-notice-version v1 ~/Downloads/responses.csv
 ```
 
-Then delete the download, review and commit the note.
+If it cannot tell day from month in the dates, add `--date-order mdy`
+(or `dmy`). Then delete the download, review and commit the note.

@@ -25,6 +25,9 @@
 #                            default: told from the header row
 #   --from DATE --to DATE    the collection window, YYYY-MM-DD (default: the
 #                            first and last response dates)
+#   --date-order dmy|mdy     day and month order of dates like 05/11/2026;
+#                            needed when no day or month in the export is
+#                            over 12 (refused otherwise, never guessed)
 #   --vault DIR              default: the vault this script belongs to
 #   --stop-list FILE         terms to refuse, one per line (default
 #                            <vault>/.binnacle/forms-stoplist, gitignored)

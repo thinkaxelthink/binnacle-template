@@ -683,7 +683,15 @@ body_lacks() { # pattern, note -> the pattern is nowhere but exported_at
 gl_hash=$(sha ABC123)
 ms_hash=$(sha ms-form-1)
 
-check "forms google csv: exits 0" conv --form-id "https://docs.google.com/forms/d/e/ABC123/viewform" --invited 5 "$F/google.csv"
+check "forms dates: day and month undecidable is refused" expect_fail conv --form-id ABC123 "$F/google.csv"
+check "forms dates: the refusal asks for --date-order, writes nothing" bash -c 'grep -q -- "--date-order" "$1" && test ! -e "$2"' _ "$T/conv.out" "$FO"
+check "forms dates: --date-order dmy reads day first" conv --form-id ABC123 --date-order dmy "$F/google.csv"
+check "forms dates: dmy window" test -f "$FO/form-${gl_hash:0:12}-2026-02-11-to-2026-09-11.md"
+rm -rf "$FO"
+check "forms dates: --from and --to need no date order" conv --form-id ABC123 --from 2026-11-01 --to 2026-11-30 "$F/google.csv"
+check "forms dates: declared window" test -f "$FO/form-${gl_hash:0:12}-2026-11-01-to-2026-11-30.md"
+rm -rf "$FO"
+check "forms google csv: exits 0" conv --form-id "https://docs.google.com/forms/d/e/ABC123/viewform" --invited 5 --date-order mdy "$F/google.csv"
 N=$(only_note || true)
 check "forms google csv: one note per form and window" test "$N" = "$FO/form-${gl_hash:0:12}-2026-11-02-to-2026-11-09.md"
 check "forms: front-matter type form-responses" grep -qx 'type: form-responses' "$N"
@@ -727,7 +735,7 @@ check "forms msforms xlsx: identity columns dropped" body_lacks 'jdoe\|example.c
 
 # Shuffle: R labels follow a fresh random order every run, not the rows.
 printf 'Timestamp,Thoughts\n' >"$F/six.csv"
-for w in alpha bravo charlie delta echo foxtrot; do printf '11/1/2026 9:00:00,%s\n' "$w" >>"$F/six.csv"; done
+for w in alpha bravo charlie delta echo foxtrot; do printf '11/13/2026 9:00:00,%s\n' "$w" >>"$F/six.csv"; done
 labels=""
 for _ in 1 2 3 4 5 6 7 8; do
   rm -rf "$FO"
@@ -742,7 +750,7 @@ rm -rf "$FO"
 refuse() { # name, text, converter args... -> csv with TEXT as one answer, converted
   local name=$1 text=$2
   shift 2
-  printf 'Timestamp,What should we change?\n11/1/2026 9:00:00,fine\n11/2/2026 9:00:00,"%s"\n' "$text" >"$F/$name.csv"
+  printf 'Timestamp,What should we change?\n11/13/2026 9:00:00,fine\n11/14/2026 9:00:00,"%s"\n' "$text" >"$F/$name.csv"
   conv --form-id refuse "$@" "$F/$name.csv"
 }
 refused() { # class, secret -> exit 3, no note, class and place named, value not printed
@@ -769,6 +777,13 @@ check "forms subject: the declared subject's name passes the stop-list" refuse r
 check "forms subject: named in front-matter and answers" bash -c 'grep -qx "subject: \"Pat Lee\"" "$1" && grep -q "Pat is great" "$1"' _ "$(only_note)"
 set +e; refuse r "Pat and Robin Quill" --subject "Pat Lee"; echo $? >"$T/rc"; set -e
 check "forms subject: other stop-list names still refused" bash -c 'test "$(cat "$1")" = 3' _ "$T/rc"
+rm -rf "$FO"
+printf 'Sam Lee\n' >"$T/colleague-stoplist"
+set +e; refuse r "Sam Lee was rude" --subject "Pat Lee" --stop-list "$T/colleague-stoplist"; echo $? >"$T/rc"; set -e
+check "forms subject: a colleague sharing the subject's surname is refused" refused stop-list "Sam"
+printf 'Pat Lee\nLee Quill\n' >"$T/colleague-stoplist"
+set +e; refuse r "Pat Lee Quill helped" --subject "Pat Lee" --stop-list "$T/colleague-stoplist"; echo $? >"$T/rc"; set -e
+check "forms subject: a stop-list name overlapping the subject's is refused" refused stop-list "Quill"
 printf 'Lee Quill\n' >"$T/other-stoplist"
 set +e; refuse r "Lee Quill helped" --stop-list "$T/other-stoplist"; echo $? >"$T/rc"; set -e
 check "forms refusal: --stop-list file" bash -c 'test "$(cat "$1")" = 3' _ "$T/rc"
@@ -791,12 +806,16 @@ check "forms re-run: a refused re-run exits non-zero" expect_fail conv --form-id
 check "forms re-run: a refused re-run leaves the notes alone" test "$(cd "$FO" && cksum ./*.md)" = "$before"
 check "forms: headers that differ between files are refused" expect_fail conv --form-id x "$F/msforms.csv" "$F/google.csv"
 printf 'What should we change?\nnothing\n' >"$F/notime.csv"
+printf '"Completion time";"Rate it, from 0 to 10, please";"What, if anything, should change?"\n2026-11-03 10:00:00;7;"less churn, more focus"\n' >"$F/semicolon.csv"
+rm -rf "$FO"
+check "forms csv: semicolon export with commas in quoted titles" conv --form-id semi --platform msforms "$F/semicolon.csv"
+check "forms csv: semicolon columns kept apart" bash -c 'grep -qx "## 1. Rate it, from 0 to 10, please" "$1" && grep -qx "Rating: 1 answer, median 7." "$1" && grep -qx "## 2. What, if anything, should change?" "$1" && grep -Eqx "\- \*\*R1:\*\* less churn, more focus" "$1"' _ "$(only_note)"
 check "forms: no timestamps needs --from and --to" expect_fail conv --form-id x --platform google "$F/notime.csv"
 check "forms: no timestamps with --from and --to" conv --form-id notime --platform google --from 2026-11-01 --to 2026-11-02 "$F/notime.csv"
 check "forms: no temporary files left" test -z "$(find "$FO" -name '.tmp-*')"
 check "forms: nothing committed" test "$(git -C "$FV" rev-parse HEAD)" = "$fv_head"
 
-# Mover: synced folder -> converter -> delete the converted exports only.
+# Mover: synced folder -> converter -> exports kept in processed/<form>/.
 rm -rf "$FO"
 SY=$T/onedrive/Binnacle\ forms
 mkdir -p "$SY/team-pulse" "$SY/leaky" "$SY/unset" "$FV/.binnacle/forms"
@@ -806,7 +825,7 @@ done
 printf 'not a response\n' >"$SY/team-pulse/desktop.ini"
 printf 'Completion time,What went well?\n11/12/2026 9:00:00,ask jdoe@example.com\n' >"$SY/leaky/r1.csv"
 printf 'Completion time,What went well?\n11/12/2026 9:00:00,fine\n' >"$SY/unset/r1.csv"
-printf '# team pulse\nform_title=Team pulse\nform_id=pulse-1\naudience=Platform team\nconsent_notice_version=v2\ninvited=4\n' \
+printf '# team pulse\nform_title=Team pulse\nform_id=pulse-1\naudience=Platform team\nconsent_notice_version=v2\ninvited=9\ndate_order=mdy\n' \
   >"$FV/.binnacle/forms/team-pulse.conf"
 sed 's/pulse-1/leaky-1/' "$FV/.binnacle/forms/team-pulse.conf" >"$FV/.binnacle/forms/leaky.conf"
 git -C "$FV" config binnacle.formsSyncDir "$SY"
@@ -814,17 +833,43 @@ mover() { "$repo/setup/forms/mover.sh" --vault "$FV" "$@" >"$T/mover.out" 2>&1; 
 check "mover: one form exits 0" mover team-pulse
 N=$(only_note || true)
 check "mover: one note for the form's window" test "${N##*/}" = "form-$(sha pulse-1 | cut -c1-12)-2026-11-11-to-2026-11-13.md"
-check "mover: settings reach the note" bash -c 'grep -qx "respondents: 3" "$1" && grep -qx "invited: 4" "$1" && grep -qx "consent_notice_version: \"v2\"" "$1" && grep -qx "platform: msforms" "$1"' _ "$N"
+check "mover: settings reach the note" bash -c 'grep -qx "respondents: 3" "$1" && grep -qx "invited: 9" "$1" && grep -qx "consent_notice_version: \"v2\"" "$1" && grep -qx "platform: msforms" "$1"' _ "$N"
 check "mover: rating and free text" bash -c 'grep -qx "Rating: 3 answers, median 4." "$1" && grep -Eq "R[1-3]:\*\* answer 2, with a comma" "$1"' _ "$N"
-check "mover: converted exports deleted" test -z "$(find "$SY/team-pulse" -name '*.csv')"
+check "mover: converted exports moved out of the form folder" test -z "$(find "$SY/team-pulse" -name '*.csv')"
+check "mover: converted exports kept in processed/" bash -c 'for i in 1 2 3; do test -f "$1/processed/team-pulse/r$i.csv" || exit 1; done' _ "$SY"
 check "mover: other files left alone" test -f "$SY/team-pulse/desktop.ini"
 check "mover: never commits" bash -c 'test "$(git -C "$1" rev-parse HEAD)" = "$2" && test -z "$(git -C "$1" diff --cached --name-only)"' _ "$FV" "$fv_head"
 check "mover: no new responses is fine" mover team-pulse
 check "mover: every folder, with a refusal and a missing settings file, exits non-zero" expect_fail mover
+check "mover: processed/ is not taken for a form" bash -c '! grep -q "form processed" "$1"' _ "$T/mover.out"
 check "mover: refused form keeps its export" test -f "$SY/leaky/r1.csv"
 check "mover: refusal names the class, not the value" bash -c 'grep -q "email pattern" "$1" && ! grep -q "jdoe@" "$1"' _ "$T/mover.out"
 check "mover: missing settings keeps the export and says so" bash -c 'test -f "$1/unset/r1.csv" && grep -q "no settings file" "$2"' _ "$SY" "$T/mover.out"
 check "mover: only the converted note in the inbox" test "$(find "$FO" -name '*.md' | wc -l | tr -d ' ')" = 1
+pulse=form-$(sha pulse-1 | cut -c1-12)
+printf 'Completion time,Rate the week (1-5),What went well?\n11/12/2026 18:00:00,5,late same day\n' >"$SY/team-pulse/r4.csv"
+check "mover: a late file with the same dates exits 0" mover team-pulse
+check "mover: same window, one complete note" bash -c 'test "$(find "$1" -name "*.md" | wc -l | tr -d " ")" = 1 && grep -qx "respondents: 4" "$1/$2-2026-11-11-to-2026-11-13.md" && grep -q "answer 1, with a comma" "$1/$2-2026-11-11-to-2026-11-13.md" && grep -q "late same day" "$1/$2-2026-11-11-to-2026-11-13.md"' _ "$FO" "$pulse"
+printf 'Completion time,Rate the week (1-5),What went well?\n11/14/2026 8:00:00,1,late next day\n' >"$SY/team-pulse/r5.csv"
+check "mover: a late file with new dates exits 0" mover team-pulse
+check "mover: wider window, one complete note" bash -c 'test "$(find "$1" -name "*.md" | wc -l | tr -d " ")" = 1 && n=$1/$2-2026-11-11-to-2026-11-14.md && grep -qx "respondents: 5" "$n" && grep -q "answer 3, with a comma" "$n" && grep -q "late same day" "$n" && grep -q "late next day" "$n"' _ "$FO" "$pulse"
+check "mover: every export still kept" test "$(find "$SY/processed/team-pulse" -name '*.csv' | wc -l | tr -d ' ')" = 5
+mv "$FO/$pulse-2026-11-11-to-2026-11-14.md" "$T/ingested.md"
+printf 'Completion time,Rate the week (1-5),What went well?\n12/14/2026 8:00:00,4,next window\n' >"$SY/team-pulse/r6.csv"
+check "mover: a new window before purging is refused" expect_fail mover team-pulse
+check "mover: the refusal says to purge and keeps the file" bash -c 'grep -q -- "--purge team-pulse" "$1" && test -f "$2/team-pulse/r6.csv" && test -z "$(find "$3" -name "*.md")"' _ "$T/mover.out" "$SY" "$FO"
+check "mover: --purge exits 0" mover --purge team-pulse
+check "mover: --purge deletes the processed exports" test ! -e "$SY/processed/team-pulse"
+check "mover: --purge leaves new files alone" test -f "$SY/team-pulse/r6.csv"
+check "mover: after a purge the next window converts" mover team-pulse
+check "mover: next window's note holds only its responses" grep -qx 'respondents: 1' "$FO/$pulse-2026-12-14-to-2026-12-14.md"
+rm -f "$FO/$pulse-2026-12-14-to-2026-12-14.md"
+mkdir -p "$SY/declared"
+printf 'Completion time,What went well?\n05/11/2026 9:00:00,fine\n' >"$SY/declared/r1.csv"
+sed 's/pulse-1/declared-1/; /^date_order=/d' "$FV/.binnacle/forms/team-pulse.conf" >"$FV/.binnacle/forms/declared.conf"
+printf 'from=2026-11-01\nto=2026-11-30\n' >>"$FV/.binnacle/forms/declared.conf"
+check "mover: a window declared in the settings" mover declared
+check "mover: the declared window names the note" test -f "$FO/form-$(sha declared-1 | cut -c1-12)-2026-11-01-to-2026-11-30.md"
 check "mover: refuses a synced folder inside the vault" expect_fail mover --sync-dir "$FV/raw"
 git -C "$FV" config --unset binnacle.formsSyncDir
 check "mover: refuses without a synced folder" expect_fail mover
