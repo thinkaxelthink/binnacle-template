@@ -118,7 +118,8 @@ if [ -z "${GH_TOKEN:-}" ] && [ -n "$token_file" ]; then
   # Only a regular file of ours that nobody else can read: mode 600 or 400.
   [ -f "$token_file" ] && [ ! -L "$token_file" ] \
     || die "binnacle.ghTokenFile '$token_file' is not a regular file"
-  perm=$(stat -c '%u %a' "$token_file" 2>/dev/null || stat -f '%u %Lp' "$token_file")
+  perm=$(stat -c '%u %a' "$token_file" 2>/dev/null || stat -f '%u %Lp' "$token_file" 2>/dev/null) \
+    || die "cannot stat binnacle.ghTokenFile '$token_file'"
   case $perm in
     "$(id -u) 600" | "$(id -u) 400") ;;
     *) die "refusing binnacle.ghTokenFile '$token_file': it must be owned by you with mode 600 or 400 (chmod 600 it)" ;;
