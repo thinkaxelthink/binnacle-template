@@ -153,10 +153,12 @@ g fetch --quiet "$REMOTE" "$BASE" || die "could not fetch $REMOTE/$BASE"
 base_ref=$REMOTE/$BASE
 
 # 1. Zone: uncommitted changes and anything already committed on the branch.
+pending=()
+while IFS= read -r -d '' p; do pending+=("$p"); done < <(changed_paths)
 outside=()
 while IFS= read -r -d '' p; do
   importable "$p" || outside+=("$p")
-done < <(changed_paths; g -c core.quotePath=false diff -z --name-only "$base_ref...HEAD")
+done < <([ "${#pending[@]}" -eq 0 ] || printf '%s\0' "${pending[@]}"; g -c core.quotePath=false diff -z --name-only "$base_ref...HEAD")
 if [ "${#outside[@]}" -gt 0 ]; then
   printf 'binnacle-import: changes outside %s/ and %s (nothing was committed):\n' "$ZONE" "$TYPES" >&2
   printf '%s\n' "${outside[@]}" | sort -u | sed 's/^/  /' >&2
@@ -165,11 +167,11 @@ fi
 
 # 2. Size cap, before the hook, so every offender is listed at once.
 too_big=()
-while IFS= read -r -d '' p; do
+for p in ${pending[@]+"${pending[@]}"}; do
   [ -f "$VAULT/$p" ] && [ ! -L "$VAULT/$p" ] || continue
   size=$(wc -c <"$VAULT/$p" | tr -d ' ')
   [ "$size" -le "$MAX_BYTES" ] || too_big+=("$p ($size bytes)")
-done < <(changed_paths)
+done
 if [ "${#too_big[@]}" -gt 0 ]; then
   printf 'binnacle-import: files over the %s-byte cap (nothing was committed):\n' "$MAX_BYTES" >&2
   printf '  %s\n' "${too_big[@]}" >&2
@@ -177,8 +179,8 @@ if [ "${#too_big[@]}" -gt 0 ]; then
 fi
 
 # 3. Commit through the normal hook.
-if [ -n "$(changed_paths | tr -d '\0')" ]; then
-  g add -A
+if [ "${#pending[@]}" -gt 0 ]; then
+  g --literal-pathspecs add -A -- "${pending[@]}"
   if ! g commit --quiet -m "Import Notion slip box into $ZONE/"; then
     die "the pre-commit hook refused the commit (see its message above: gitleaks found a secret, a file is over 10 MB, or gitleaks is missing). Nothing was committed and nothing is pushed. Remove the flagged note or line from $ZONE/ (if it was a real secret, rotate it), then re-run finish. Never commit with --no-verify."
   fi
