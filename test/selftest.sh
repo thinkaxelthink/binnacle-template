@@ -23,8 +23,9 @@ check() { # description, command...
   if "$@" >>"$T/check.log" 2>&1; then ok "$d"; else bad "$d"; fi
 }
 
-scripts=(.githooks/pre-commit bin/binnacle-run bin/binnacle-import setup/common/lib.sh setup/common/install-hooks.sh
-  setup/github/setup.sh setup/shoyu/setup.sh setup/workmac/setup.sh test/selftest.sh)
+scripts=(.githooks/pre-commit bin/binnacle-run bin/binnacle-import bin/binnacle-nightly setup/common/lib.sh
+  setup/common/install-hooks.sh setup/github/setup.sh setup/shoyu/setup.sh setup/shoyu/nightly.sh
+  setup/workmac/setup.sh test/selftest.sh)
 
 # --- static checks -------------------------------------------------------------
 for s in "${scripts[@]}"; do
@@ -190,8 +191,45 @@ check "run --dry-run: exits 0" run --dry-run
 check "run --dry-run: lists the source" grep -q 'raw/inbox/first-idea.md' "$T/run.out"
 check "run --dry-run: creates no branch" no_run_branches
 
+# A Notion import in progress (binnacle.importBranch, or a local import/*
+# branch) makes the run skip, even with sources waiting.
+git -C "$V" config binnacle.importBranch import/notion-20261113
+check "import: binnacle.importBranch set -> run exits 0" run
+check "import: says skipped: import in progress" grep -q 'skipped: import in progress' "$T/run.out"
+check "import: --dry-run skips too" bash -c '"$1/bin/binnacle-run" --dry-run >"$2" 2>&1 && grep -q "skipped: import in progress" "$2"' _ "$V" "$T/run.out"
+git -C "$V" config --unset binnacle.importBranch
+git -C "$V" branch import/notion/20261113
+check "import: local import/* branch -> run exits 0" run
+check "import: branch named in the skip line" grep -q 'skipped: import in progress.*import/notion/20261113' "$T/run.out"
+git -C "$V" branch -q -D import/notion/20261113
+check "import: skips create no run branch" no_run_branches
+check "import: skips make no GitHub call" test ! -s "$T/gh.log"
+
+# One run at a time: a lock directory under .git holding the owner's PID.
+lock=$V/.git/binnacle-run.lock
+mkdir -p "$T/holder"
+printf '#!/bin/sh\nsleep 60\nexit 0\n' >"$T/holder/binnacle-run"
+chmod +x "$T/holder/binnacle-run"
+"$T/holder/binnacle-run" &
+holder=$!
+mkdir "$lock"
+echo "$holder" >"$lock/pid"
+check "lock: a live run makes a second run skip (exit 0)" run
+check "lock: says skipped: another binnacle-run, with its pid" \
+  grep -q "skipped: another binnacle-run is in progress (pid $holder;" "$T/run.out"
+check "lock: overlap creates no run branch" no_run_branches
+check "lock: overlap makes no GitHub call" test ! -s "$T/gh.log"
+check "lock: the live run's lock is left alone" test "$(cat "$lock/pid")" = "$holder"
+kill "$holder" 2>/dev/null || true
+wait "$holder" 2>/dev/null || true
+# A live PID that is not a binnacle-run (PID reuse) counts as stale.
+echo "$$" >"$lock/pid"
+
 main_before=$(git -C "$V" rev-parse HEAD)
 check "run: ok run exits 0" env STUB_CLAUDE_MODE=ok bash -c '"$1/bin/binnacle-run" >"$2" 2>&1' _ "$V" "$T/run.out"
+check "lock: stale lock (PID not a binnacle-run) broken" grep -q "removed a stale lock (pid $$)" "$T/run.out"
+check "lock: released after a run" test ! -e "$lock"
+check "lock: nothing left beside it" bash -c '! ls "$1/.git" | grep -q binnacle-run.lock' _ "$V"
 check "run: local checkout left on main, untouched" test "$(git -C "$V" rev-parse HEAD)" = "$main_before"
 check "run: temporary worktree removed" test "$(git -C "$V" worktree list | wc -l | tr -d ' ')" = 1
 on_remote_branch ls-tree -r --name-only origin/latest-run >"$T/tree" 2>&1 || true
@@ -243,7 +281,13 @@ git -C "$V" config --unset binnacle.ghTokenFile
 
 : >"$T/gh.log"
 sleep 1
+sh -c 'exit 0' &
+dead=$!
+wait "$dead" || true
+mkdir "$lock"
+echo "$dead" >"$lock/pid"
 check "run: zone violation exits non-zero" expect_fail env STUB_CLAUDE_MODE=zone "$V/bin/binnacle-run"
+check "lock: stale lock (dead PID) broken, released after a failed run" test ! -e "$lock"
 on_remote_branch ls-tree -r --name-only origin/latest-run >"$T/tree" 2>&1 || true
 note_on_branch >"$T/note" 2>&1 || true
 check "run: zone violation recorded as failed" grep -q '^status: failed$' "$T/note"
@@ -401,6 +445,7 @@ shoyu_setup BINNACLE_GIT_NAME="Env Name" BINNACLE_GIT_EMAIL=env@example.invalid
 check "shoyu: BINNACLE_GIT_NAME overrides" test "$(git -C "$V" config --local user.name)" = "Env Name"
 check "shoyu: BINNACLE_GIT_EMAIL overrides" test "$(git -C "$V" config --local user.email)" = env@example.invalid
 check "shoyu: global git config untouched" test "$(cat "$T/gitconfig")" = "$global_before"
+check "shoyu: setup.sh does not schedule nightly runs" test ! -e "$T/home/Library/LaunchAgents"
 git -C "$V" config --local --unset user.name
 git -C "$V" config --local --unset user.email
 workmac_setup() { # extra env... -> runs setup/workmac against the fixture vault
@@ -421,6 +466,7 @@ workmac_setup BINNACLE_GIT_NAME="Env Name" BINNACLE_GIT_EMAIL=env@example.invali
 check "workmac: BINNACLE_GIT_NAME overrides" test "$(git -C "$V" config --local user.name)" = "Env Name"
 check "workmac: BINNACLE_GIT_EMAIL overrides" test "$(git -C "$V" config --local user.email)" = env@example.invalid
 check "workmac: global git config untouched" test "$(cat "$T/gitconfig")" = "$global_before"
+git -C "$V" config binnacle.role wiki-writer # back to shoyu's role for the nightly.sh checks below
 check "install-hooks: idempotent" bash -c '"$1" "$2" && "$1" "$2"' _ "$repo/setup/common/install-hooks.sh" "$V"
 stubs_phys=$(cd "$T/stubs" && pwd -P)
 check "install-hooks: records the gitleaks path" \
@@ -430,6 +476,103 @@ check "install-hooks: updates the recorded path when gitleaks moves" bash -c \
   _ "$repo/setup/common/install-hooks.sh" "$V" "$stubs_phys"
 check "github --dry-run: changes nothing, names the check" bash -c \
   '"$1" --dry-run | grep -q "\"context\": \"gitleaks\""' _ "$repo/setup/github/setup.sh"
+
+# --- bin/binnacle-nightly -----------------------------------------------------------------
+# The wrapper beside a stub binnacle-run, started the way launchd starts it:
+# empty environment but HOME, bare PATH.
+NW=$T/nightly-vault
+mkdir -p "$NW/bin" "$T/nhome"
+cp "$repo/bin/binnacle-nightly" "$NW/bin/"
+cat >"$NW/bin/binnacle-run" <<'EOF'
+#!/bin/sh
+echo "stub-run PATH=$PATH"
+echo "stub-run cwd=$(pwd -P)"
+echo "stub-run token ghp_abcdefghijklmnopqrstuvwxyz0123456789 key sk-ant-api03-SECRETSECRET"
+echo x >>"$NIGHTLY_CALLS"
+exit "${STUB_RUN_STATUS:-0}"
+EOF
+chmod +x "$NW/bin/binnacle-run"
+nlog=$T/nhome/Library/Logs/binnacle/nightly.log
+nightly() { # extra env... -> exit status of the wrapper in $T/nightly.status
+  local st=0
+  : >"$T/nightly.calls"
+  env -i HOME="$T/nhome" PATH=/usr/bin:/bin NIGHTLY_CALLS="$T/nightly.calls" "$@" \
+    "$NW/bin/binnacle-nightly" >"$T/nightly.out" 2>&1 || st=$?
+  echo "$st" >"$T/nightly.status"
+}
+nightly STUB_RUN_STATUS=7
+check "nightly: exits with binnacle-run's status" test "$(cat "$T/nightly.status")" = 7
+check "nightly: runs binnacle-run once (no retry)" test "$(wc -l <"$T/nightly.calls" | tr -d ' ')" = 1
+check "nightly: log written to ~/Library/Logs/binnacle/nightly.log" test -s "$nlog"
+check "nightly: log readable by its owner only" test -n "$(find "$nlog" -perm 600)"
+check "nightly: explicit PATH (~/.local/bin, Homebrew, system)" grep -qxF \
+  "stub-run PATH=$T/nhome/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" "$nlog"
+check "nightly: runs from the vault clone it lives in" grep -qxF "stub-run cwd=$(cd "$NW" && pwd -P)" "$nlog"
+check "nightly: dated start line" grep -Eq '^=== [0-9]{4}-[0-9]{2}-[0-9]{2} [0-9:]{8} .* binnacle-nightly start' "$nlog"
+check "nightly: records the exit status" grep -q 'binnacle-nightly end: exit 7 (' "$nlog"
+check "nightly: token-shaped strings masked" bash -c \
+  '! grep -Eq "ghp_abcdef|SECRETSECRET" "$1" && grep -q "ghp_\[redacted\]" "$1"' _ "$nlog"
+nightly
+check "nightly: second run appends" test "$(grep -c 'binnacle-nightly start' "$nlog")" = 2
+check "nightly: ok run records exit 0" bash -c 'tail -n 1 "$1" | grep -q "end: exit 0 ("' _ "$nlog"
+dd if=/dev/zero bs=1024 count=1100 2>/dev/null | tr '\0' 'x' >>"$nlog"
+nightly
+check "nightly: log over 1 MB moved to nightly.log.1" test "$(wc -c <"$nlog.1" | tr -d ' ')" -gt 1048576
+check "nightly: fresh log after rotation" test "$(grep -c 'binnacle-nightly start' "$nlog")" = 1
+
+# --- setup/shoyu/nightly.sh (stub launchctl) ----------------------------------------------
+mkdir -p "$T/lstub" "$T/lhome"
+cat >"$T/lstub/launchctl" <<'EOF'
+#!/bin/sh
+echo "launchctl $*" >>"$STUB_LAUNCHCTL_LOG"
+case "$1" in
+  print) [ -e "$STUB_LAUNCHCTL_LOADED" ] || exit 113; printf '\truns = 1\n\tlast exit code = 0\n' ;;
+  bootstrap) : >"$STUB_LAUNCHCTL_LOADED" ;;
+  bootout) rm -f "$STUB_LAUNCHCTL_LOADED" ;;
+esac
+exit 0
+EOF
+chmod +x "$T/lstub/launchctl"
+NS=$repo/setup/shoyu/nightly.sh
+plist=$T/lhome/Library/LaunchAgents/com.binnacle.nightly.plist
+nightly_sh() { # extra env... subcommand
+  env HOME="$T/lhome" BINNACLE_DIR="$V" PATH="$T/lstub:$PATH" STUB_LAUNCHCTL_LOG="$T/launchctl.log" \
+    STUB_LAUNCHCTL_LOADED="$T/launchctl.loaded" "$@" >"$T/nightly-sh.out" 2>&1
+}
+plist_time() { awk '/<key>(Hour|Minute)<\/key>/ { getline; gsub(/[^0-9]/, ""); printf "%s%s", sep, $0; sep = ":" }' "$plist"; }
+: >"$T/launchctl.log"
+check "nightly.sh install: default time" nightly_sh "$NS" install
+check "nightly.sh install: plist renders 03:30" test "$(plist_time)" = 3:30
+check "nightly.sh install: plist runs the vault's wrapper" \
+  grep -qF "<string>$(cd "$V" && pwd -P)/bin/binnacle-nightly</string>" "$plist"
+check "nightly.sh install: no placeholder left" bash -c '! grep -q "{{" "$1"' _ "$plist"
+if command -v plutil >/dev/null 2>&1; then
+  check "nightly.sh install: plist lints" plutil -lint -s "$plist"
+fi
+check "nightly.sh install: bootstrap in the GUI domain" \
+  grep -qxF "launchctl bootstrap gui/$(id -u) $plist" "$T/launchctl.log"
+check "nightly.sh install: chosen time" nightly_sh BINNACLE_NIGHTLY_HOUR=4 BINNACLE_NIGHTLY_MINUTE=05 "$NS" install
+check "nightly.sh install: plist renders 04:05" test "$(plist_time)" = 4:5
+check "nightly.sh install: re-install boots out the old job first" \
+  grep -qxF "launchctl bootout gui/$(id -u)/com.binnacle.nightly" "$T/launchctl.log"
+check "nightly.sh install: refuses hour 24" expect_fail nightly_sh BINNACLE_NIGHTLY_HOUR=24 "$NS" install
+check "nightly.sh install: refuses a non-number minute" expect_fail nightly_sh BINNACLE_NIGHTLY_MINUTE=x "$NS" install
+check "nightly.sh install: refused time leaves the plist alone" test "$(plist_time)" = 4:5
+nightly_sh "$NS" status || true
+check "nightly.sh status: shows the time" grep -q "installed: .* (daily at 04:05 local)" "$T/nightly-sh.out"
+check "nightly.sh status: shows launchd's last exit code" grep -q "last exit code = 0" "$T/nightly-sh.out"
+git clone -q "$T/remote.git" "$T/vault2"
+git -C "$T/vault2" config binnacle.role wiki-writer
+check "nightly.sh install: refuses to replace another vault's schedule" \
+  expect_fail nightly_sh BINNACLE_DIR="$T/vault2" "$NS" install
+git -C "$V" config binnacle.role capture
+check "nightly.sh install: refuses a capture-only clone" expect_fail nightly_sh "$NS" install
+git -C "$V" config binnacle.role wiki-writer
+check "nightly.sh uninstall: exits 0" nightly_sh "$NS" uninstall
+check "nightly.sh uninstall: plist removed and job unloaded" \
+  bash -c 'test ! -e "$1" && test ! -e "$2"' _ "$plist" "$T/launchctl.loaded"
+check "nightly.sh uninstall: idempotent" nightly_sh "$NS" uninstall
+check "nightly.sh status: exits 0 when not installed" nightly_sh "$NS" status
 
 printf '\n%s passed, %s failed\n' "$passed" "$failed"
 if [ "$failed" -gt 0 ]; then

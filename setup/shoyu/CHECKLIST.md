@@ -86,4 +86,81 @@ Obsidian >= 1.13.
       Expect a PR URL, auto-merge on, and a new note in `audit/runs/` after
       the merge.
 
-Nightly runs come in version 2; until then, run on demand.
+## Nightly runs
+
+Proposed: a LaunchAgent for your shoyu user runs `bin/binnacle-nightly`
+every day at **03:30 local time**. The wrapper runs the same
+`bin/binnacle-run` as above (branch, ingest, flag-only lint, `wiki/log.md`,
+audit note, PR, auto-merge once the gitleaks check passes), with a fixed
+PATH, and logs to `~/Library/Logs/binnacle/nightly.log`. A failed run
+leaves its PR open with the reason in the audit note and is never retried;
+later runs refuse until you merge or close that PR. An empty inbox means no
+run and no PR. 03:30 is after late-evening captures have synced and
+outside the 02:00-03:00 hour that daylight-saving changes skip or repeat.
+
+Nothing is scheduled until you install it; `setup.sh` never does.
+
+- [ ] **[shoyu, human]** Approve the time (03:30, or pick another below).
+- [ ] **[shoyu, human]** Do "First run" above by hand first, so you know the
+      token and Claude Code login work. The nightly run happens in your
+      logged-in session, so the keychain item is used when it is readable,
+      else `binnacle.ghTokenFile`. If your login keychain locks itself (on
+      sleep or after a timeout), a 03:30 run may wait on an unlock prompt:
+      in that case keep the token only in the file and delete the keychain
+      item (`security delete-generic-password -s binnacle-gh-token`).
+- [ ] **[shoyu, human]** Install, on shoyu while logged in to its desktop:
+
+      ```sh
+      ~/binnacle/setup/shoyu/nightly.sh install
+      # or another time (24-hour, local), e.g. 02:15:
+      BINNACLE_NIGHTLY_HOUR=2 BINNACLE_NIGHTLY_MINUTE=15 ~/binnacle/setup/shoyu/nightly.sh install
+      ```
+
+      It writes `~/Library/LaunchAgents/com.binnacle.nightly.plist` and
+      loads it with `launchctl bootstrap gui/<uid>` (no sudo). Re-run it to
+      change the time.
+- [ ] **[shoyu, human]** Check it: `~/binnacle/setup/shoyu/nightly.sh status`
+      shows whether it is installed and loaded, its time, the last exit
+      code launchd saw, and the start and end lines of the last run.
+
+**Reading the log.** `tail -n 40 ~/Library/Logs/binnacle/nightly.log`.
+Each run sits between `=== <date> binnacle-nightly start` and
+`=== <date> binnacle-nightly end: exit <status>`. Exit 0 is a finished run
+(a PR link), an empty inbox ("nothing to do") or a skip ("skipped: ...");
+anything else is a failure, with the reason on the lines above and in the
+run's audit note. Past 1 MB the log moves to `nightly.log.1`. Claude
+Code's own output for a run stays in the temporary folder the log names.
+If launchd cannot start the wrapper at all, its error is in
+`~/Library/Logs/binnacle/launchd.log`.
+
+**Pausing.** `~/binnacle/setup/shoyu/nightly.sh uninstall` unloads the job
+and deletes the plist; `install` again resumes it.
+
+How it behaves:
+
+- **Sleep.** If shoyu is asleep at 03:30, launchd runs the job when it
+  wakes (once, however many nights were missed). If shoyu is shut down,
+  that night is skipped.
+- **Logged in.** A LaunchAgent only runs while the shoyu user is logged in
+  (a locked screen is fine). After a restart nothing runs until you log in
+  again. If shoyu cannot stay logged in, the alternative is a cron entry
+  for the shoyu user (`crontab -e`, e.g.
+  `30 3 * * * $HOME/binnacle/bin/binnacle-nightly`): it runs without a
+  login, but skips nights shoyu was asleep and needs
+  `binnacle.ghTokenFile`, because the keychain is out of reach. The
+  template does not set cron up.
+- **Notion import.** While an import is in progress (`git config
+  binnacle.importBranch` is set, or a local `import/*` branch exists in
+  `~/binnacle`), runs log "skipped: import in progress" and do nothing; the
+  first run after the import finishes picks up the inbox.
+- **One run at a time.** A run holds `~/binnacle/.git/binnacle-run.lock`;
+  a run started meanwhile (by hand or by the schedule) logs "skipped:
+  another binnacle-run is in progress". A lock left by a crashed run is
+  cleared automatically.
+- **Obsidian Git.** The run works in a temporary worktree from
+  `origin/main` and never checks out, commits or pushes in `~/binnacle`,
+  so Obsidian Git's pull and commit-and-sync carry on as usual. The only
+  shared step is the run's `git fetch`: if it collides with an Obsidian Git
+  pull at that moment, the night's run fails before it branches (logged)
+  and the next night runs normally. Captures Obsidian Git has not pushed by
+  03:30 wait for the next night.

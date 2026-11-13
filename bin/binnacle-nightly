@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# binnacle-nightly: the scheduled entry point for bin/binnacle-run on shoyu.
+#
+# Usage: bin/binnacle-nightly
+#
+#   Started by the com.binnacle.nightly LaunchAgent (setup/shoyu/nightly.sh
+#   install), which runs with launchd's bare PATH. This wrapper:
+#     - sets a minimal, explicit PATH: ~/.local/bin (claude, gitleaks),
+#       Homebrew (/usr/local/bin on Intel, /opt/homebrew/bin) for git and gh,
+#       then the system directories;
+#     - runs bin/binnacle-run once from the vault clone it lives in;
+#     - appends the run's output, with start and end time and exit status,
+#       to ~/Library/Logs/binnacle/nightly.log. A log over 1 MB is first
+#       moved to nightly.log.1 (replacing the previous one). Anything shaped
+#       like a GitHub or Anthropic token is masked before it is written.
+#   It exits with bin/binnacle-run's status. Nothing retries: a failed run
+#   leaves its PR open, and later runs refuse until it is merged or closed.
+#   Runs skipped for an import in progress, an overlapping run or an empty
+#   inbox exit 0.
+set -u
+
+here=$(cd "$(dirname "$0")" && pwd -P)
+vault=$(cd "$here/.." && pwd -P)
+run=$here/binnacle-run
+
+PATH="$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+export PATH
+
+log_dir=$HOME/Library/Logs/binnacle
+log=$log_dir/nightly.log
+max_bytes=1048576
+
+mkdir -p "$log_dir"
+if [ -f "$log" ] && [ "$(wc -c <"$log" | tr -d ' ')" -gt "$max_bytes" ]; then
+  mv -f "$log" "$log.1"
+fi
+(umask 077 && : >>"$log")
+
+stamp() { date '+%Y-%m-%d %H:%M:%S %z'; }
+# Mask token-shaped strings: GitHub (ghp_, gho_, ghu_, ghs_, ghr_,
+# github_pat_) and Anthropic (sk-ant-).
+redact() {
+  LC_ALL=C sed -E \
+    -e 's/(gh[pousr]_|github_pat_)[A-Za-z0-9_]+/\1[redacted]/g' \
+    -e 's/sk-ant-[A-Za-z0-9_-]+/sk-ant-[redacted]/g'
+}
+
+start=$(date +%s)
+{
+  printf '\n=== %s binnacle-nightly start (pid %s)\n' "$(stamp)" "$$"
+  printf 'vault: %s\nPATH:  %s\n' "$vault" "$PATH"
+} >>"$log"
+
+if [ ! -x "$run" ]; then
+  status=127
+  printf 'binnacle-nightly: %s not found or not executable\n' "$run" >>"$log"
+else
+  (cd "$vault" && "$run" </dev/null 2>&1) | redact >>"$log"
+  status=${PIPESTATUS[0]}
+fi
+
+printf '=== %s binnacle-nightly end: exit %s (%ss)\n' "$(stamp)" "$status" "$(($(date +%s) - start))" >>"$log"
+exit "$status"

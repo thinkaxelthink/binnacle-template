@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Template. setup/shoyu/nightly.sh install fills in the wrapper path, the
+  time (local; BINNACLE_NIGHTLY_HOUR / BINNACLE_NIGHTLY_MINUTE, default
+  03:30) and the log folder, writes the result to
+  ~/Library/LaunchAgents/com.binnacle.nightly.plist and loads it. To change
+  the time, re-run install; do not edit the installed copy.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.binnacle.nightly</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{NIGHTLY}}</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>{{HOUR}}</integer>
+    <key>Minute</key>
+    <integer>{{MINUTE}}</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>{{LOG_DIR}}/launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>{{LOG_DIR}}/launchd.log</string>
+</dict>
+</plist>
