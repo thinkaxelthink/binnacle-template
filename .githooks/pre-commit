@@ -6,6 +6,8 @@
 #   1. any staged file is larger than 10 MB (BINNACLE_MAX_FILE_BYTES), or
 #   2. gitleaks finds a secret in the staged changes, or
 #   3. gitleaks cannot be found (fail closed: no scan, no commit).
+#      Run setup/common/install-hooks.sh after installing gitleaks; it
+#      records the binary's path so GUI git clients find it.
 set -eu
 
 max_bytes=${BINNACLE_MAX_FILE_BYTES:-10485760}
@@ -28,13 +30,31 @@ done < <(git diff --cached --name-only --diff-filter=ACMR -z)
 [ "$too_big" -eq 0 ] || fail "unstage files over the 10 MB cap (git restore --staged <file>)"
 
 # 2. Secret scan. GUI apps such as Obsidian run hooks with a minimal PATH,
-#    so also look in the Homebrew locations.
-gitleaks=${BINNACLE_GITLEAKS:-}
-if [ -z "$gitleaks" ]; then
-  gitleaks=$(PATH="$PATH:/opt/homebrew/bin:/usr/local/bin" command -v gitleaks || true)
-fi
-[ -n "$gitleaks" ] && [ -x "$gitleaks" ] \
-  || fail "gitleaks not found; install it (brew install gitleaks) - refusing to commit unscanned"
+#    so do not rely on PATH alone. Look in order at: BINNACLE_GITLEAKS (when
+#    set, it is the only candidate); the path setup/common/install-hooks.sh
+#    recorded in `git config binnacle.gitleaks`; PATH; then the per-user and
+#    Homebrew install locations.
+find_gitleaks() {
+  local c
+  if [ -n "${BINNACLE_GITLEAKS:-}" ]; then
+    if [ -f "$BINNACLE_GITLEAKS" ] && [ -x "$BINNACLE_GITLEAKS" ]; then
+      printf '%s\n' "$BINNACLE_GITLEAKS"
+    fi
+    return 0
+  fi
+  for c in "$(git config --get binnacle.gitleaks || true)" \
+    "$(command -v gitleaks || true)" \
+    "${HOME:+$HOME/.local/bin/gitleaks}" \
+    /opt/homebrew/bin/gitleaks /usr/local/bin/gitleaks; do
+    if [ -n "$c" ] && [ -f "$c" ] && [ -x "$c" ]; then
+      printf '%s\n' "$c"
+      return 0
+    fi
+  done
+}
+gitleaks=$(find_gitleaks)
+[ -n "$gitleaks" ] \
+  || fail "gitleaks not found - install it (gitleaks step in setup/<device>/CHECKLIST.md), then run setup/common/install-hooks.sh to record its path; refusing to commit unscanned"
 
 set -- git --pre-commit --staged --redact --no-banner --log-level warn
 [ -f "$root/.gitleaks.toml" ] && set -- "$@" --config "$root/.gitleaks.toml"

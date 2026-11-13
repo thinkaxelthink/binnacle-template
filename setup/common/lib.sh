@@ -14,13 +14,26 @@ bn_die() {
   exit 1
 }
 
-# Print the path of a usable gitleaks binary, or nothing.
+# Print the absolute path of a usable gitleaks binary, or nothing.
+# Looks at BINNACLE_GITLEAKS (when set, the only candidate), PATH, then the
+# per-user (~/.local/bin) and Homebrew install locations, the same places
+# .githooks/pre-commit searches.
 bn_find_gitleaks() {
+  local c
   if [ -n "${BINNACLE_GITLEAKS:-}" ]; then
-    [ -x "$BINNACLE_GITLEAKS" ] && printf '%s\n' "$BINNACLE_GITLEAKS"
+    if [ -f "$BINNACLE_GITLEAKS" ] && [ -x "$BINNACLE_GITLEAKS" ]; then
+      bn_physical_path "$BINNACLE_GITLEAKS"
+    fi
     return 0
   fi
-  PATH="$PATH:/opt/homebrew/bin:/usr/local/bin" command -v gitleaks || true
+  for c in "$(command -v gitleaks || true)" "$HOME/.local/bin/gitleaks" \
+    /opt/homebrew/bin/gitleaks /usr/local/bin/gitleaks; do
+    if [ -n "$c" ] && [ -f "$c" ] && [ -x "$c" ]; then
+      bn_physical_path "$c"
+      return 0
+    fi
+  done
+  return 0
 }
 
 # bn_version_ge A B: succeed when dotted version A >= B.

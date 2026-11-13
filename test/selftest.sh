@@ -56,6 +56,7 @@ git -C "$V" config binnacle.role wiki-writer
 
 printf '#!/bin/sh\nexit 0\n' >"$T/stubs/gitleaks-pass"
 printf '#!/bin/sh\necho "leak found" >&2\nexit 1\n' >"$T/stubs/gitleaks-fail"
+printf '#!/bin/sh\n: >"$STUB_MARK"\nexit 0\n' >"$T/stubs/gitleaks-mark"
 
 cat >"$T/stubs/gh" <<'EOF'
 #!/bin/sh
@@ -119,6 +120,27 @@ check "hook: rejects when gitleaks flags" expect_fail env BINNACLE_GITLEAKS="$T/
 reset_vault
 check "hook: fails closed without gitleaks" expect_fail env BINNACLE_GITLEAKS="$T/missing" \
   bash -c 'printf x >"$1/soundings/b.md" && git -C "$1" add -A && git -C "$1" commit -qm b' _ "$V"
+reset_vault
+
+# GUI clients (Obsidian) run git with a minimal PATH: the hook must find the
+# gitleaks path that install-hooks recorded, and still fail closed without one.
+git_bin=$(command -v git)
+mkdir -p "$T/emptyhome"
+gui_commit() { # file -> commit with no BINNACLE_GITLEAKS, minimal PATH, empty HOME
+  env -u BINNACLE_GITLEAKS HOME="$T/emptyhome" PATH=/usr/bin:/bin STUB_MARK="$T/mark" \
+    bash -c 'printf x >"$2/soundings/$3" && "$1" -C "$2" add -A && "$1" -C "$2" commit -qm "$3"' _ "$git_bin" "$V" "$1"
+}
+git -C "$V" config binnacle.gitleaks "$T/stubs/gitleaks-mark"
+check "hook: minimal PATH commits via recorded binnacle.gitleaks" gui_commit d.md
+check "hook: minimal PATH ran the recorded gitleaks" test -f "$T/mark"
+reset_vault
+git -C "$V" config binnacle.gitleaks "$T/missing"
+if [ -e /opt/homebrew/bin/gitleaks ] || [ -e /usr/local/bin/gitleaks ]; then
+  printf 'skip   hook: minimal PATH fails closed (gitleaks in a system location)\n'
+else
+  check "hook: minimal PATH fails closed without gitleaks" expect_fail gui_commit e.md
+fi
+git -C "$V" config --unset binnacle.gitleaks
 reset_vault
 
 real_gl=$(PATH="$PATH:/opt/homebrew/bin:/usr/local/bin" command -v gitleaks || true)
@@ -224,6 +246,12 @@ check "workmac: marks an existing clone capture-only" env HOME="$T/home" BINNACL
   BINNACLE_OWNER="${T##*/}" BINNACLE_REPO=remote "$repo/setup/workmac/setup.sh"
 check "workmac: role is capture" test "$(git -C "$V" config binnacle.role)" = capture
 check "install-hooks: idempotent" bash -c '"$1" "$2" && "$1" "$2"' _ "$repo/setup/common/install-hooks.sh" "$V"
+stubs_phys=$(cd "$T/stubs" && pwd -P)
+check "install-hooks: records the gitleaks path" \
+  test "$(git -C "$V" config binnacle.gitleaks)" = "$stubs_phys/gitleaks-pass"
+check "install-hooks: updates the recorded path when gitleaks moves" bash -c \
+  'BINNACLE_GITLEAKS="$3/gitleaks-mark" "$1" "$2" && test "$(git -C "$2" config binnacle.gitleaks)" = "$3/gitleaks-mark"' \
+  _ "$repo/setup/common/install-hooks.sh" "$V" "$stubs_phys"
 check "github --dry-run: changes nothing, names the check" bash -c \
   '"$1" --dry-run | grep -q "\"context\": \"gitleaks\""' _ "$repo/setup/github/setup.sh"
 
