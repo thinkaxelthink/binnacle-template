@@ -27,6 +27,14 @@
 #   --dry-run  report what would happen; no fetch, no branch, no Claude, no
 #              GitHub calls.
 #
+#   Local only (git config binnacle.localOnly true, set by
+#   setup/work-brain/setup.sh until a remote is connected): the run starts
+#   from the local main, needs no remote and no gh, and in place of push,
+#   PR and auto-merge it fast-forwards main to the run branch (the
+#   pre-commit secret scan has passed on its commits). A failed run, or one
+#   main moved past, keeps its branch for you to merge or delete; a new run
+#   refuses while a binnacle-run/* branch is waiting.
+#
 # Env: BINNACLE_REMOTE (origin), BINNACLE_BASE (main),
 #      BINNACLE_CLAUDE (claude), BINNACLE_CLAUDE_ARGS (extra args, e.g. --model x),
 #      BINNACLE_GH (gh). GH_TOKEN, if unset, is read from the macOS keychain
@@ -70,6 +78,8 @@ role=$(git -C "$root" config --get binnacle.role || true)
 [ "$role" = wiki-writer ] \
   || die "binnacle.role is '${role:-unset}', not wiki-writer: AI runs happen only on shoyu (setup/shoyu/setup.sh)"
 [ -f "$prompt_file" ] || die "missing prompt file $prompt_file"
+local_only=0
+[ "$(git -C "$root" config --get binnacle.localOnly || true)" != true ] || local_only=1
 
 # --- Notion import in progress -----------------------------------------------
 # bin/binnacle-import records its branch while an import is open. The run
@@ -142,7 +152,11 @@ if [ "$dry" -eq 0 ] && ! take_lock; then
   exit 0
 fi
 
-if [ "$dry" -eq 1 ]; then
+if [ "$local_only" -eq 1 ]; then
+  base_ref=refs/heads/$BASE
+  git -C "$root" rev-parse --verify -q "$base_ref^{commit}" >/dev/null || die "local only, and there is no local $BASE branch"
+  [ "$dry" -eq 1 ] || command -v "$CLAUDE" >/dev/null 2>&1 || die "Claude Code ('$CLAUDE') not found"
+elif [ "$dry" -eq 1 ]; then
   base_ref=$REMOTE/$BASE
   git -C "$root" rev-parse --verify -q "$base_ref^{commit}" >/dev/null || base_ref=$BASE
 else
@@ -178,7 +192,11 @@ if [ "$dry" -eq 1 ]; then
   for f in "${sources[@]}"; do printf '  %s\n' "$f"; done
   say "Claude: $CLAUDE -p <bin/binnacle-run.prompt.md> --permission-mode acceptEdits --disallowedTools Bash,WebFetch,WebSearch $CLAUDE_ARGS"
   say "audit:  $note"
-  say "then:   zone guard, commit, push, PR to $BASE, $GH pr merge --auto --squash"
+  if [ "$local_only" -eq 1 ]; then
+    say "then:   zone guard, commit, fast-forward $BASE to the run branch (local only: no push, no PR)"
+  else
+    say "then:   zone guard, commit, push, PR to $BASE, $GH pr merge --auto --squash"
+  fi
   exit 0
 fi
 
@@ -208,11 +226,18 @@ fi
 unset tok
 [ "$xtrace" -eq 0 ] || set -x
 
-open_prs=$("$GH" pr list --state open --base "$BASE" --json headRefName,url \
-  --jq '.[] | select(.headRefName | startswith("binnacle-run/")) | .url') \
-  || die "could not list open PRs with $GH"
-[ -z "$open_prs" ] \
-  || die "a run PR is still open: $open_prs - merge or close it first (runs never retry on their own)"
+if [ "$local_only" -eq 1 ]; then
+  # Local only: a kept run branch is the open PR.
+  waiting=$(git -C "$root" for-each-ref --format='%(refname:short)' 'refs/heads/binnacle-run/*' | tr '\n' ' ')
+  [ -z "$waiting" ] \
+    || die "a run branch is still waiting: $waiting- merge it into $BASE or delete it first (runs never retry on their own)"
+else
+  open_prs=$("$GH" pr list --state open --base "$BASE" --json headRefName,url \
+    --jq '.[] | select(.headRefName | startswith("binnacle-run/")) | .url') \
+    || die "could not list open PRs with $GH"
+  [ -z "$open_prs" ] \
+    || die "a run PR is still open: $open_prs - merge or close it first (runs never retry on their own)"
+fi
 
 # --- worktree ----------------------------------------------------------------
 tmp=${TMPDIR:-/tmp}
@@ -304,7 +329,11 @@ write_note() {
     fi
     printf '\n## Outcome\n\n- status: %s\n' "$status"
     [ -z "$reason" ] || printf -- '- reason: %s\n' "$reason"
-    printf -- '- PR: %s\n- merged: %s\n\n' "${pr:-(not opened yet)}" "$merged"
+    if [ "$local_only" -eq 1 ]; then
+      printf -- '- PR: none (local only: branch %s)\n- merged: %s\n\n' "$branch" "$merged"
+    else
+      printf -- '- PR: %s\n- merged: %s\n\n' "${pr:-(not opened yet)}" "$merged"
+    fi
     cat "$region"
   } >"$note"
 }
@@ -413,6 +442,39 @@ if ! git commit --quiet -m "run $run_id: ingest ${#moved[@]} source(s) ($status)
   git add -A -- audit
   git commit --quiet -m "run $run_id: failed" \
     || die "could not commit the failure note either; worktree kept at $wt"
+fi
+
+if [ "$local_only" -eq 1 ]; then
+  # No remote: the run branch takes the PR's place. Every commit on it has
+  # passed the pre-commit secret scan, so an ok run is fast-forwarded into
+  # main (the checkout Obsidian uses), as auto-merge would after the scan.
+  merged=false
+  [ "$status" != ok ] || merged=true
+  write_note "$status" "$reason" "" "$merged" "$region"
+  git add -- "$note"
+  git diff --cached --quiet || git commit --quiet -m "run $run_id: local only"
+  merged_local=0
+  if [ "$status" = ok ] \
+    && [ "$(git -C "$root" symbolic-ref --quiet --short HEAD || true)" = "$BASE" ] \
+    && git -C "$root" merge --quiet --ff-only "$branch" >/dev/null 2>&1; then
+    merged_local=1
+  fi
+  cd "$root"
+  git worktree remove --force "$wt"
+  [ "$merged_local" -eq 0 ] || git branch --quiet -D "$branch"
+  finished=1
+  if [ "$merged_local" -eq 1 ]; then
+    say "done: $BASE fast-forwarded to run $run_id (local only, no remote)"
+    exit 0
+  fi
+  if [ "$status" = ok ]; then
+    say "done, but $BASE could not be fast-forwarded (it moved, local changes are in the way, or it is not checked out in $root)"
+    say "merge the run by hand: git -C $root merge $branch && git -C $root branch -d $branch"
+    exit 0
+  fi
+  say "FAILED: $reason"
+  say "branch $branch kept for review: fix and merge it, or delete it (git branch -D $branch), before the next run"
+  exit 1
 fi
 
 git push --quiet -u "$REMOTE" "$branch" || die "git push failed; worktree kept at $wt"
