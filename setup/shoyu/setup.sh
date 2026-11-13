@@ -43,15 +43,7 @@ if [ -n "${BINNACLE_GH_TOKEN_FILE:-}" ]; then
 fi
 
 bn_log "git identity (vault clone only)"
-# Without one, git falls back to user@<hostname> and leaks the machine's
-# network name into every vault commit. Set locally, never --global.
-git_name=${BINNACLE_GIT_NAME:-$(git -C "$BINNACLE_DIR" config --local user.name 2>/dev/null || true)}
-git_name=${git_name:-$BINNACLE_OWNER}
-git_email=${BINNACLE_GIT_EMAIL:-$(git -C "$BINNACLE_DIR" config --local user.email 2>/dev/null || true)}
-git_email=${git_email:-$BINNACLE_OWNER@users.noreply.github.com}
-git -C "$BINNACLE_DIR" config --local user.name "$git_name"
-git -C "$BINNACLE_DIR" config --local user.email "$git_email"
-bn_ok "commits in $BINNACLE_DIR authored as $git_name <$git_email>"
+bn_set_git_identity
 
 bn_log "hooks"
 "$BINNACLE_DIR/setup/common/install-hooks.sh" "$BINNACLE_DIR"

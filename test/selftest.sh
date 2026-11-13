@@ -293,6 +293,26 @@ shoyu_setup BINNACLE_GIT_NAME="Env Name" BINNACLE_GIT_EMAIL=env@example.invalid
 check "shoyu: BINNACLE_GIT_NAME overrides" test "$(git -C "$V" config --local user.name)" = "Env Name"
 check "shoyu: BINNACLE_GIT_EMAIL overrides" test "$(git -C "$V" config --local user.email)" = env@example.invalid
 check "shoyu: global git config untouched" test "$(cat "$T/gitconfig")" = "$global_before"
+git -C "$V" config --local --unset user.name
+git -C "$V" config --local --unset user.email
+workmac_setup() { # extra env... -> runs setup/workmac against the fixture vault
+  env HOME="$T/home" BINNACLE_DIR="$V" BINNACLE_OWNER="${T##*/}" BINNACLE_REPO=remote "$@" \
+    "$repo/setup/workmac/setup.sh" >"$T/workmac.out" 2>&1 || true
+}
+workmac_setup
+check "workmac: user.name defaults to the owner" test "$(git -C "$V" config --local user.name)" = "${T##*/}"
+check "workmac: user.email defaults to the noreply address" \
+  test "$(git -C "$V" config --local user.email)" = "${T##*/}@users.noreply.github.com"
+git -C "$V" config --local user.name "Vault Person"
+git -C "$V" config --local user.email 12345+vault@users.noreply.github.com
+workmac_setup
+check "workmac: existing vault-local user.name kept" test "$(git -C "$V" config --local user.name)" = "Vault Person"
+check "workmac: existing vault-local user.email kept" \
+  test "$(git -C "$V" config --local user.email)" = 12345+vault@users.noreply.github.com
+workmac_setup BINNACLE_GIT_NAME="Env Name" BINNACLE_GIT_EMAIL=env@example.invalid
+check "workmac: BINNACLE_GIT_NAME overrides" test "$(git -C "$V" config --local user.name)" = "Env Name"
+check "workmac: BINNACLE_GIT_EMAIL overrides" test "$(git -C "$V" config --local user.email)" = env@example.invalid
+check "workmac: global git config untouched" test "$(cat "$T/gitconfig")" = "$global_before"
 check "install-hooks: idempotent" bash -c '"$1" "$2" && "$1" "$2"' _ "$repo/setup/common/install-hooks.sh" "$V"
 stubs_phys=$(cd "$T/stubs" && pwd -P)
 check "install-hooks: records the gitleaks path" \

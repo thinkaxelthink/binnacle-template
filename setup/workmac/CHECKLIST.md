@@ -47,9 +47,18 @@ contract material, no credentials.
 
 It refuses to run until `binnacle.workDocs` is set, refuses any vault
 location inside that folder, verifies the clone, marks it
-`git config binnacle.role capture`, and installs the gitleaks + 10 MB
-pre-commit hook, recording the gitleaks path in
-`git config binnacle.gitleaks`.
+`git config binnacle.role capture`, sets the commit identity in the vault
+clone only (`user.name` from `BINNACLE_GIT_NAME`, else the existing local
+name, else `BINNACLE_OWNER`; `user.email` from `BINNACLE_GIT_EMAIL`, else the
+existing local email, else `<BINNACLE_OWNER>@users.noreply.github.com`) so
+Obsidian Git's commits never carry this Mac's hostname, and installs the
+gitleaks + 10 MB pre-commit hook, recording the gitleaks path in
+`git config binnacle.gitleaks`. You do not set `user.name` or `user.email`
+yourself; to use a different identity, re-run the script with the env vars:
+
+```sh
+BINNACLE_GIT_NAME="<name>" BINNACLE_GIT_EMAIL="<email>" ~/binnacle/setup/workmac/setup.sh
+```
 
 ## In Obsidian
 

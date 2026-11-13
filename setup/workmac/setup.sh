@@ -9,6 +9,9 @@
 #        `git config --global binnacle.workDocs` (set by a CHECKLIST.md step).
 #        It is local to the Mac and never committed; with neither set the
 #        script refuses to run.
+#        BINNACLE_GIT_NAME (existing vault-local user.name, else BINNACLE_OWNER),
+#        BINNACLE_GIT_EMAIL (existing vault-local user.email, else
+#        BINNACLE_OWNER@users.noreply.github.com)
 #
 # No AI writes happen here: the clone is marked binnacle.role=capture, and
 # bin/binnacle-run refuses to run unless the role is wiki-writer.
@@ -44,6 +47,9 @@ bn_clone_vault
 bn_log "machine role"
 git -C "$BINNACLE_DIR" config binnacle.role capture
 bn_ok "binnacle.role = capture (bin/binnacle-run refuses here)"
+
+bn_log "git identity (vault clone only)"
+bn_set_git_identity
 
 bn_log "hooks"
 "$BINNACLE_DIR/setup/common/install-hooks.sh" "$BINNACLE_DIR"
