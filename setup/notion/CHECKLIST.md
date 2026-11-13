@@ -132,9 +132,9 @@ What those sources establish:
       It refuses unless `~/binnacle` is the wiki-writer clone, on `main`,
       clean and equal to `origin/main`. It creates
       `import/notion-<UTC timestamp>`, records it in
-      `git config binnacle.importBranch` (a marker that scheduled jobs,
-      such as a future nightly `bin/binnacle-run`, must check; nothing
-      enforces it yet) and is safe to re-run. `bin/binnacle-import status`
+      `git config binnacle.importBranch` (while it is set,
+      `bin/binnacle-run`, by hand or nightly, skips without doing
+      anything) and is safe to re-run. `bin/binnacle-import status`
       shows where things stand.
 - [ ] **[shoyu, owner]** Open Importer (command palette: **Importer:
       Import notes**, or the ribbon icon), choose **Notion**, then
