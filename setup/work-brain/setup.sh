@@ -150,8 +150,9 @@ fi
 
 if command -v "${BINNACLE_GH:-gh}" >/dev/null 2>&1 && "${BINNACLE_GH:-gh}" auth status >/dev/null 2>&1; then
   wb_base_permission "$org_slug"
+  wb_app_installations "$org_slug"
 else
-  bn_log "org base repository permission: checked when you connect the remote (gh is not logged in here)"
+  bn_log "org base repository permission and app installations: checked when you connect the remote (gh is not logged in here)"
 fi
 
 if [ "$(git -C "$dir" config --get binnacle.localOnly || true)" = true ]; then

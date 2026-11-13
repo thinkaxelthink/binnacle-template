@@ -71,6 +71,9 @@ case "$1 $2" in
     for a in "$@"; do [ "$prev" = --body-file ] && cp "$a" "$STUB_BODY"; prev=$a; done
     echo "https://github.com/example/binnacle/pull/1"; exit 0 ;;
   "pr merge") exit 0 ;;
+  "api --paginate")
+    [ "${STUB_ORG_APPS:-}" = FAIL ] && exit 1
+    [ -z "${STUB_ORG_APPS:-}" ] || printf '%s\n' $STUB_ORG_APPS; exit 0 ;;
   "api orgs/"*) [ "${STUB_ORG_PERM:-}" = FAIL ] && exit 1; echo "${STUB_ORG_PERM:-}"; exit 0 ;;
   "api repos/"*) [ -n "${STUB_REPO_PRIVATE:-}" ] || exit 1; echo "$STUB_REPO_PRIVATE"; exit 0 ;;
 esac
@@ -702,11 +705,27 @@ check "base permission: API failure warns, does not fail" bp FAIL
 check "base permission: API failure gives the manual check" grep -q 'could not read org .acme.*Check it by hand' "$T/bp.out"
 check "base permission: asked the org endpoint" grep -q 'gh api orgs/acme --jq' "$T/gh.log"
 
+# GitHub Apps installed on all repositories: warns with the fix, never blocks.
+# The stub prints what gh's --jq filter would: one slug per all-repos app.
+apps() { env STUB_ORG_APPS="$1" bash -c '. "$2/setup/common/lib.sh"; . "$2/setup/work-brain/lib.sh"; wb_app_installations acme' _ "$1" "$repo" >"$T/apps.out" 2>&1; }
+check "app installations: none on all repositories is ok" apps ""
+check "app installations: none says so" grep -q 'no GitHub App is installed on all repositories of acme' "$T/apps.out"
+check "app installations: none gives no warning" bash -c '! grep -qi warn "$1"' _ "$T/apps.out"
+check "app installations: some on all repositories warns but does not fail" apps "ci-bot docs-sync"
+check "app installations: names the first app" grep -q "GitHub App 'ci-bot' is installed on all repositories of acme" "$T/apps.out"
+check "app installations: names the second app" grep -q "GitHub App 'docs-sync' is installed on all repositories of acme" "$T/apps.out"
+check "app installations: gives the fix" grep -q 'Repository access: Only select repositories, or uninstall' "$T/apps.out"
+check "app installations: unreadable warns, does not fail" apps FAIL
+check "app installations: unreadable says so and gives the manual check" \
+  grep -q 'could not read the app installations of .acme.*check by hand' "$T/apps.out"
+check "app installations: asked the installations endpoint for all-repos apps" \
+  grep -q 'gh api --paginate orgs/acme/installations --jq .*repository_selection == "all"' "$T/gh.log"
+
 # Connecting a remote: explicit, re-checks collisions, then warns on base permission.
 mkdir -p "$T/gh-acme"
 BR=$T/gh-acme/binnacle-acme-engineering-jdoe.git
 git init -q --bare "$BR"
-connect() { env STUB_ORG_PERM=read "$B/setup/work-brain/connect-remote.sh" "$@" >"$T/connect.out" 2>&1; }
+connect() { env STUB_ORG_PERM=read STUB_ORG_APPS=ci-bot "$B/setup/work-brain/connect-remote.sh" "$@" >"$T/connect.out" 2>&1; }
 git init -q --bare "$T/gh-acme/wrong-name.git"
 check "connect: refuses a repository with another name" expect_fail connect --url "$T/gh-acme/wrong-name.git"
 check "connect: refuses a public GitHub repository" expect_fail env STUB_REPO_PRIVATE=false \
@@ -720,6 +739,7 @@ check "connect: origin set" test "$(git -C "$B" remote get-url origin)" = "$BR"
 check "connect: main pushed" test "$(git -C "$BR" rev-parse main)" = "$(git -C "$B" rev-parse main)"
 check "connect: leaves local-only mode" expect_fail git -C "$B" config --get binnacle.localOnly
 check "connect: warns on a readable base permission" grep -q "base repository permission is 'read'" "$T/connect.out"
+check "connect: warns on an app installed on all repositories" grep -q "GitHub App 'ci-bot' is installed on all repositories" "$T/connect.out"
 check "connect: re-run is safe" connect --url "$BR"
 check "connect: setup re-run accepts the connected origin" wb_setup --org acme-engineering --user jdoe
 check "connect: refuses a different repository once connected" expect_fail connect --url "$T/gh-acme2/binnacle-acme-engineering-jdoe.git"

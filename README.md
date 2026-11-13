@@ -121,8 +121,9 @@ The work machine runs the AI writer, on demand. It starts with no remote
 organization. Same hook, scan and 10 MB cap; company material is allowed
 there, but never customer or member personal data, payment data, minors'
 names, health or waiver records, or credentials. Once the organization's
-base repository permission is "No permission", the brain is visible only to
-its user and the organization's owners. The setup refuses colliding
+base repository permission is "No permission" and no GitHub App is
+installed on all of its repositories, the brain is visible only to its user
+and the organization's owners (who can always read it). The setup refuses colliding
 folders and remotes and never touches `~/binnacle`; the personal vault and
 its setup are unchanged. Steps: `setup/work-brain/CHECKLIST.md`.
 
@@ -140,7 +141,8 @@ creation, the import marker, out-of-zone refusal, size-cap stop, no
 auto-merge), plus `bin/binnacle-nightly` and `setup/shoyu/nightly.sh`
 (stubbed `binnacle-run` and `launchctl`), and the work-brain profile
 (name slugging, collision refusals, local-only setup and runs, connecting
-a remote, the base-permission check with a stubbed `gh`), against
+a remote, the base-permission and app-installation checks with a stubbed
+`gh`), against
 throwaway repositories. CI runs it on changes
 to scripts (`.github/workflows/selftest.yml`).
 

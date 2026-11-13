@@ -168,11 +168,38 @@ wb_base_permission() {
   fi
   case $perm in
     none)
-      bn_ok "base permission is none: the brain repo is visible only to you and the $org owners (and anyone you add to it yourself)" ;;
+      bn_ok "base permission is none: the brain repo is visible only to you and the $org owners (and anyone you add to it yourself, and apps installed on all repositories)" ;;
     "")
       bn_warn "cannot read the base permission: GitHub shows it only to org owners (an owner's gh login). Ask an owner, or check by hand: $fix" ;;
     *)
       bn_warn "base repository permission is '$perm': every member of $org can read the private brain repo (org owners always can). Fix: $fix" ;;
   esac
+  return 0
+}
+
+# wb_app_installations ORG: warn, with the fix, for every GitHub App
+# installed on all of the org's repositories: such an app can read a new
+# private brain repo whatever the base permission. Never fails: it only warns.
+wb_app_installations() {
+  local org=$1 gh=${BINNACLE_GH:-gh} apps slug
+  local fix="GitHub > $org > Settings > GitHub Apps > Configure > Repository access: Only select repositories, or uninstall the app if it is unused (https://github.com/organizations/$org/settings/installations)"
+  bn_log "GitHub Apps installed on all repositories ($org)"
+  if ! command -v "$gh" >/dev/null 2>&1; then
+    bn_warn "gh not found, so the app installations cannot be read. Check them by hand: $fix"
+    return 0
+  fi
+  if ! apps=$("$gh" api --paginate "orgs/$org/installations" \
+    --jq '.installations[] | select(.repository_selection == "all") | .app_slug' 2>/dev/null); then
+    bn_warn "could not read the app installations of '$org' with gh: GitHub shows them only to org owners whose gh login has the admin:org scope (gh auth refresh -s admin:org). Ask an owner, or check by hand that no app has access to all repositories: $fix"
+    return 0
+  fi
+  if [ -z "$apps" ]; then
+    bn_ok "no GitHub App is installed on all repositories of $org"
+    return 0
+  fi
+  while IFS= read -r slug; do
+    [ -n "$slug" ] || continue
+    bn_warn "GitHub App '$slug' is installed on all repositories of $org, so it can read the private brain repo. Fix: $fix"
+  done <<<"$apps"
   return 0
 }

@@ -44,15 +44,20 @@ policies on what may be stored where; they win over this list.
 ## Who can see it
 
 Until you connect a remote, the brain exists only on this machine. Once
-connected, it is a **private** repository in the organization. It is then
-visible to you and to the organization's owners (owners can always see
-every repository), **provided the organization's base repository permission
-is "No permission"**. With any other base permission (Read, Write, Admin),
-every member of the organization can read it. Anyone you later add to the
+connected, it is a **private** repository in the organization. The
+organization's owners can always read it: no setting removes their access
+to any repository in the organization. Beyond you and the owners, it is
+visible only **provided the organization's base repository permission is
+"No permission" and no GitHub App is installed on all of its
+repositories**. With any other base permission (Read, Write, Admin),
+every member of the organization can read it. A GitHub App installed with
+access to all repositories can read every new private repository, the
+brain included, whatever the base permission. Anyone you later add to the
 repository yourself, as a collaborator or through a team, can read it too;
 keep that list empty. `connect-remote.sh` (and `setup.sh`, when `gh` is
-logged in) reads the base permission and warns, with the fix, when it is
-not "No permission".
+logged in) reads the base permission and the app installations and warns,
+with the fix, when the base permission is not "No permission" or an app is
+installed on all repositories.
 
 ## Before the script
 
@@ -144,6 +149,12 @@ repositories (GitHub Team or Enterprise).
       > Base permissions: **No permission**. If you are not an owner, ask
       one, and confirm it before connecting. Otherwise every member can read
       the brain.
+- [ ] **[browser, org owner]** Organization > Settings > GitHub Apps: for
+      each installed app, Configure > Repository access. Uninstall apps
+      that are unused; set the rest to **Only select repositories**. An app
+      with access to all repositories can read the brain, whatever the base
+      permission. Reading the installations needs an owner (with `gh`, a
+      login with the `admin:org` scope); if you are not one, ask one.
 - [ ] **[browser, human]** Create an **empty private** repository
       `acme-engineering/binnacle-acme-engineering-jdoe`: no README,
       license or `.gitignore`. Add no collaborators or teams.
@@ -165,7 +176,8 @@ repositories (GitHub Team or Enterprise).
       repository, the repository must hold nothing but this brain's
       history, its name must be the brain's name, and it must be private
       when `gh` can see it), adds `origin`, pushes `main`, unsets
-      `binnacle.localOnly`, then checks the base permission. `--url` picks
+      `binnacle.localOnly`, then checks the base permission and the app
+      installations. `--url` picks
       another address for the same repository name.
 - [ ] **[browser, human]** In the repository: Actions shows the
       `secret-scan` workflow ran with a job named `gitleaks`. Settings >
