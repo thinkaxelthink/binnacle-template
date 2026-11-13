@@ -677,7 +677,7 @@ check "work-brain run: no run branch left" test -z "$(git -C "$B" branch --list 
 check "work-brain run: no GitHub call" test ! -s "$T/gh.log"
 check "work-brain run: still no remote" test -z "$(git -C "$B" remote)"
 check "work-brain run: audit note says local only" bash -c 'grep -q "^- PR: none (local only" "$1"/audit/runs/*.md' _ "$B"
-check "work-brain run: audit note merged pending" bash -c 'grep -q "^merged: pending$" "$1"/audit/runs/*.md' _ "$B"
+check "work-brain run: audit note merged true" bash -c 'grep -q "^merged: true$" "$1"/audit/runs/*.md' _ "$B"
 printf 'Another work idea.\n' >"$B/raw/inbox/second.md"
 git -C "$B" add -A
 git -C "$B" commit -qm capture2
@@ -715,8 +715,6 @@ FR=$T/gh-foreign/binnacle-acme-engineering-jdoe.git
 git clone -q --bare "$T/remote.git" "$FR"
 check "connect: refuses a repository holding other history" expect_fail connect --url "$FR"
 check "connect: foreign history adds no origin" test -z "$(git -C "$B" remote)"
-check "connect --dry-run: exits 0" connect --url "$BR" --dry-run
-check "connect --dry-run: changes nothing" bash -c 'test -z "$(git -C "$1" remote)" && test "$(git -C "$1" config binnacle.localOnly)" = true && test -z "$(git -C "$2" for-each-ref)"' _ "$B" "$BR"
 check "connect: exits 0" connect --url "$BR"
 check "connect: origin set" test "$(git -C "$B" remote get-url origin)" = "$BR"
 check "connect: main pushed" test "$(git -C "$BR" rev-parse main)" = "$(git -C "$B" rev-parse main)"

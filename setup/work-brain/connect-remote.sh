@@ -3,10 +3,9 @@
 # leave local-only mode. Run it only when you decide to; it is never part of
 # setup.sh. Safe to re-run.
 #
-# Usage: setup/work-brain/connect-remote.sh [--url URL] [--dry-run]
+# Usage: setup/work-brain/connect-remote.sh [--url URL]
 #   --url      the repository (default https://github.com/<org>/<brain name>.git);
 #              its name must be the brain's name
-#   --dry-run  run the checks, show what would happen, change nothing
 #
 # Before pushing it re-runs the collision checks: the vault must be a work
 # brain (never ~/binnacle), any existing origin must be this URL, the
@@ -25,13 +24,12 @@ here=$(cd "$(dirname "$0")" && pwd -P)
 . "$here/lib.sh"
 
 GH=${BINNACLE_GH:-gh}
-usage() { sed -n '6,9p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '6,8p' "$0" | sed 's/^# \{0,1\}//'; }
 
-url="" dry=0
+url=""
 while [ "$#" -gt 0 ]; do
   case $1 in
     --url) [ "$#" -ge 2 ] || bn_die "--url needs a value"; url=$2; shift 2 ;;
-    --dry-run) dry=1; shift ;;
     -h | --help) usage; exit 0 ;;
     *) usage >&2; exit 2 ;;
   esac
@@ -97,15 +95,6 @@ EOF
 [ -z "$foreign" ] \
   || bn_die "refusing: $url already holds history that is not this brain's (branch(es):$foreign). It points elsewhere; nothing was changed."
 if [ -z "$heads" ]; then bn_ok "repository is empty"; else bn_ok "repository holds only this brain's history"; fi
-
-if [ "$dry" -eq 1 ]; then
-  [ -n "$origin" ] || printf '  dry-run: git remote add origin %s\n' "$url"
-  printf '  dry-run: git config binnacle.remoteUrl %s\n' "$url"
-  printf '  dry-run: git push -u origin main\n'
-  printf '  dry-run: git config --unset binnacle.localOnly\n'
-  wb_base_permission "$org"
-  exit 0
-fi
 
 bn_log "connect"
 if [ -z "$origin" ]; then

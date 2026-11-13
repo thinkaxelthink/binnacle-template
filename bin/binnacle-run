@@ -448,7 +448,9 @@ if [ "$local_only" -eq 1 ]; then
   # No remote: the run branch takes the PR's place. Every commit on it has
   # passed the pre-commit secret scan, so an ok run is fast-forwarded into
   # main (the checkout Obsidian uses), as auto-merge would after the scan.
-  write_note "$status" "$reason" "" "$(merged_state)" "$region"
+  merged=false
+  [ "$status" != ok ] || merged=true
+  write_note "$status" "$reason" "" "$merged" "$region"
   git add -- "$note"
   git diff --cached --quiet || git commit --quiet -m "run $run_id: local only"
   merged_local=0

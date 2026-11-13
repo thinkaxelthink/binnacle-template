@@ -158,7 +158,6 @@ repositories (GitHub Team or Enterprise).
 - [ ] **[work machine, human]** Connect:
 
       ```sh
-      ~/binnacle-acme-engineering-jdoe/setup/work-brain/connect-remote.sh --dry-run
       ~/binnacle-acme-engineering-jdoe/setup/work-brain/connect-remote.sh
       ```
 

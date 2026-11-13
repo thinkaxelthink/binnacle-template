@@ -58,7 +58,7 @@ ask() { # variable, prompt
   [ -t 0 ] || bn_die "$2 is required (--${1}); see --help"
   printf '%s: ' "$2" >&2
   IFS= read -r v || true
-  eval "$1=\$v"
+  printf -v "$1" '%s' "$v"
 }
 [ -n "$org" ] || ask org "GitHub organization login"
 [ -n "$user" ] || ask user "your GitHub user login"
