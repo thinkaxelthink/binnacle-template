@@ -25,7 +25,8 @@
 #      BINNACLE_CLAUDE (claude), BINNACLE_CLAUDE_ARGS (extra args, e.g. --model x),
 #      BINNACLE_GH (gh). GH_TOKEN, if unset, is read from the macOS keychain
 #      item named by `git config binnacle.ghTokenItem` (default
-#      binnacle-gh-token) when present (setup/shoyu/CHECKLIST.md).
+#      binnacle-gh-token) when present, otherwise from the mode-600 file named
+#      by `git config binnacle.ghTokenFile` (setup/shoyu/CHECKLIST.md).
 set -eu
 
 usage() { sed -n '2,/^set -eu/p' "$0" | sed '$d; s/^# \{0,1\}//'; }
@@ -104,12 +105,31 @@ if [ "$dry" -eq 1 ]; then
   exit 0
 fi
 
+# The token must never reach the terminal, even under `bash -x`.
+case $- in *x*) xtrace=1; set +x ;; *) xtrace=0 ;; esac
 token_item=$(git -C "$root" config --get binnacle.ghTokenItem || echo binnacle-gh-token)
 if [ -z "${GH_TOKEN:-}" ] && command -v security >/dev/null 2>&1; then
   if tok=$(security find-generic-password -s "$token_item" -w 2>/dev/null) && [ -n "$tok" ]; then
     export GH_TOKEN="$tok"
   fi
 fi
+token_file=$(git -C "$root" config --get binnacle.ghTokenFile || true)
+if [ -z "${GH_TOKEN:-}" ] && [ -n "$token_file" ]; then
+  # Only a regular file of ours that nobody else can read: mode 600 or 400.
+  [ -f "$token_file" ] && [ ! -L "$token_file" ] \
+    || die "binnacle.ghTokenFile '$token_file' is not a regular file"
+  perm=$(stat -c '%u %a' "$token_file" 2>/dev/null || stat -f '%u %Lp' "$token_file" 2>/dev/null) \
+    || die "cannot stat binnacle.ghTokenFile '$token_file'"
+  case $perm in
+    "$(id -u) 600" | "$(id -u) 400") ;;
+    *) die "refusing binnacle.ghTokenFile '$token_file': it must be owned by you with mode 600 or 400 (chmod 600 it)" ;;
+  esac
+  tok=$(tr -d '\r\n' <"$token_file")
+  [ -n "$tok" ] || die "binnacle.ghTokenFile '$token_file' is empty"
+  export GH_TOKEN="$tok"
+fi
+unset tok
+[ "$xtrace" -eq 0 ] || set -x
 
 open_prs=$("$GH" pr list --state open --base "$BASE" --json headRefName,url \
   --jq '.[] | select(.headRefName | startswith("binnacle-run/")) | .url') \
