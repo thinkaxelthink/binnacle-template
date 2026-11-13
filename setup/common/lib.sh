@@ -112,3 +112,20 @@ bn_clone_vault() {
     git clone "$url" "$BINNACLE_DIR"
   fi
 }
+
+# Set the commit identity in the vault clone only, never --global. Without
+# one, git falls back to user@<hostname> and leaks the machine's network
+# name into every vault commit. user.name: BINNACLE_GIT_NAME, else the
+# existing vault-local name, else BINNACLE_OWNER. user.email:
+# BINNACLE_GIT_EMAIL, else the existing vault-local email, else
+# BINNACLE_OWNER@users.noreply.github.com.
+bn_set_git_identity() {
+  local git_name git_email
+  git_name=${BINNACLE_GIT_NAME:-$(git -C "$BINNACLE_DIR" config --local user.name 2>/dev/null || true)}
+  git_name=${git_name:-$BINNACLE_OWNER}
+  git_email=${BINNACLE_GIT_EMAIL:-$(git -C "$BINNACLE_DIR" config --local user.email 2>/dev/null || true)}
+  git_email=${git_email:-$BINNACLE_OWNER@users.noreply.github.com}
+  git -C "$BINNACLE_DIR" config --local user.name "$git_name"
+  git -C "$BINNACLE_DIR" config --local user.email "$git_email"
+  bn_ok "commits in $BINNACLE_DIR authored as $git_name <$git_email>"
+}
