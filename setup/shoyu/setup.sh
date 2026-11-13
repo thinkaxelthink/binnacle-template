@@ -5,7 +5,9 @@
 # Env:   BINNACLE_OWNER (thinkaxelthink), BINNACLE_REPO (binnacle),
 #        BINNACLE_DIR (~/binnacle), BINNACLE_MIN_OBSIDIAN (1.13),
 #        BINNACLE_GH_TOKEN_FILE (unset; a mode-600 token file for when the
-#        keychain is unreachable, recorded as binnacle.ghTokenFile)
+#        keychain is unreachable, recorded as binnacle.ghTokenFile),
+#        BINNACLE_GIT_NAME (existing vault-local user.name, else BINNACLE_OWNER),
+#        BINNACLE_GIT_EMAIL (BINNACLE_OWNER@users.noreply.github.com)
 #
 # Human-only steps (token, App Store, logins, plugin install) are in
 # setup/shoyu/CHECKLIST.md. Run this after its "Before the script" items.
@@ -38,6 +40,16 @@ if [ -n "${BINNACLE_GH_TOKEN_FILE:-}" ]; then
     problem "BINNACLE_GH_TOKEN_FILE '$BINNACLE_GH_TOKEN_FILE' is not a regular file; binnacle.ghTokenFile not set"
   fi
 fi
+
+bn_log "git identity (vault clone only)"
+# Without one, git falls back to user@<hostname> and leaks the machine's
+# network name into every vault commit. Set locally, never --global.
+git_name=${BINNACLE_GIT_NAME:-$(git -C "$BINNACLE_DIR" config --local user.name 2>/dev/null || true)}
+git_name=${git_name:-$BINNACLE_OWNER}
+git_email=${BINNACLE_GIT_EMAIL:-$BINNACLE_OWNER@users.noreply.github.com}
+git -C "$BINNACLE_DIR" config --local user.name "$git_name"
+git -C "$BINNACLE_DIR" config --local user.email "$git_email"
+bn_ok "commits in $BINNACLE_DIR authored as $git_name <$git_email>"
 
 bn_log "hooks"
 "$BINNACLE_DIR/setup/common/install-hooks.sh" "$BINNACLE_DIR"

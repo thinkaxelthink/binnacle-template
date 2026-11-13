@@ -274,6 +274,22 @@ check "workmac: refuses a symlink into the work folder" expect_fail env HOME="$T
 check "workmac: marks an existing clone capture-only" env HOME="$T/home" BINNACLE_DIR="$V" \
   BINNACLE_OWNER="${T##*/}" BINNACLE_REPO=remote "$repo/setup/workmac/setup.sh"
 check "workmac: role is capture" test "$(git -C "$V" config binnacle.role)" = capture
+shoyu_setup() { # extra env... -> runs setup/shoyu against the fixture vault
+  env HOME="$T/home" BINNACLE_DIR="$V" BINNACLE_OWNER="${T##*/}" BINNACLE_REPO=remote "$@" \
+    "$repo/setup/shoyu/setup.sh" >"$T/shoyu.out" 2>&1 || true
+}
+global_before=$(cat "$T/gitconfig")
+shoyu_setup
+check "shoyu: user.name defaults to the owner" test "$(git -C "$V" config --local user.name)" = "${T##*/}"
+check "shoyu: user.email defaults to the noreply address" \
+  test "$(git -C "$V" config --local user.email)" = "${T##*/}@users.noreply.github.com"
+git -C "$V" config --local user.name "Vault Person"
+shoyu_setup
+check "shoyu: existing vault-local user.name kept" test "$(git -C "$V" config --local user.name)" = "Vault Person"
+shoyu_setup BINNACLE_GIT_NAME="Env Name" BINNACLE_GIT_EMAIL=env@example.invalid
+check "shoyu: BINNACLE_GIT_NAME overrides" test "$(git -C "$V" config --local user.name)" = "Env Name"
+check "shoyu: BINNACLE_GIT_EMAIL overrides" test "$(git -C "$V" config --local user.email)" = env@example.invalid
+check "shoyu: global git config untouched" test "$(cat "$T/gitconfig")" = "$global_before"
 check "install-hooks: idempotent" bash -c '"$1" "$2" && "$1" "$2"' _ "$repo/setup/common/install-hooks.sh" "$V"
 stubs_phys=$(cd "$T/stubs" && pwd -P)
 check "install-hooks: records the gitleaks path" \
