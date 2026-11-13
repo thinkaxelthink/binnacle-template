@@ -11,7 +11,7 @@ connects to it.
 
 ## How it works
 
-You capture sources and write notes on any device. On demand, on shoyu,
+You capture sources and write notes on any device. On demand (or nightly, once scheduled), on shoyu,
 `bin/binnacle-run` has Claude Code read new sources into a cross-linked
 wiki, flag problems, and propose the change as a pull request that merges
 itself once the secret scan passes. Every run leaves an audit note.
