@@ -7,7 +7,8 @@
 #        BINNACLE_GH_TOKEN_FILE (unset; a mode-600 token file for when the
 #        keychain is unreachable, recorded as binnacle.ghTokenFile),
 #        BINNACLE_GIT_NAME (existing vault-local user.name, else BINNACLE_OWNER),
-#        BINNACLE_GIT_EMAIL (BINNACLE_OWNER@users.noreply.github.com)
+#        BINNACLE_GIT_EMAIL (existing vault-local user.email, else
+#        BINNACLE_OWNER@users.noreply.github.com)
 #
 # Human-only steps (token, App Store, logins, plugin install) are in
 # setup/shoyu/CHECKLIST.md. Run this after its "Before the script" items.
@@ -46,7 +47,8 @@ bn_log "git identity (vault clone only)"
 # network name into every vault commit. Set locally, never --global.
 git_name=${BINNACLE_GIT_NAME:-$(git -C "$BINNACLE_DIR" config --local user.name 2>/dev/null || true)}
 git_name=${git_name:-$BINNACLE_OWNER}
-git_email=${BINNACLE_GIT_EMAIL:-$BINNACLE_OWNER@users.noreply.github.com}
+git_email=${BINNACLE_GIT_EMAIL:-$(git -C "$BINNACLE_DIR" config --local user.email 2>/dev/null || true)}
+git_email=${git_email:-$BINNACLE_OWNER@users.noreply.github.com}
 git -C "$BINNACLE_DIR" config --local user.name "$git_name"
 git -C "$BINNACLE_DIR" config --local user.email "$git_email"
 bn_ok "commits in $BINNACLE_DIR authored as $git_name <$git_email>"

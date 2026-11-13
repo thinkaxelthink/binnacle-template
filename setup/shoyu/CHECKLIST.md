@@ -51,9 +51,9 @@ It verifies the clone at `~/binnacle`, marks it
 `git config binnacle.role wiki-writer`, sets the commit identity in the
 vault clone only (`user.name` from `BINNACLE_GIT_NAME`, else the existing
 local name, else `BINNACLE_OWNER`; `user.email` from `BINNACLE_GIT_EMAIL`,
-else `<BINNACLE_OWNER>@users.noreply.github.com`) so Obsidian Git's commits
-never carry the machine's hostname, installs the gitleaks + 10 MB
-pre-commit hook and records the gitleaks path in
+else the existing local email, else `<BINNACLE_OWNER>@users.noreply.github.com`)
+so Obsidian Git's commits never carry the machine's hostname, installs the
+gitleaks + 10 MB pre-commit hook and records the gitleaks path in
 `git config binnacle.gitleaks`, and checks `git`, `gh`, `claude`, and
 Obsidian >= 1.13.
 

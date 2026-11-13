@@ -284,8 +284,11 @@ check "shoyu: user.name defaults to the owner" test "$(git -C "$V" config --loca
 check "shoyu: user.email defaults to the noreply address" \
   test "$(git -C "$V" config --local user.email)" = "${T##*/}@users.noreply.github.com"
 git -C "$V" config --local user.name "Vault Person"
+git -C "$V" config --local user.email 12345+vault@users.noreply.github.com
 shoyu_setup
 check "shoyu: existing vault-local user.name kept" test "$(git -C "$V" config --local user.name)" = "Vault Person"
+check "shoyu: existing vault-local user.email kept" \
+  test "$(git -C "$V" config --local user.email)" = 12345+vault@users.noreply.github.com
 shoyu_setup BINNACLE_GIT_NAME="Env Name" BINNACLE_GIT_EMAIL=env@example.invalid
 check "shoyu: BINNACLE_GIT_NAME overrides" test "$(git -C "$V" config --local user.name)" = "Env Name"
 check "shoyu: BINNACLE_GIT_EMAIL overrides" test "$(git -C "$V" config --local user.email)" = env@example.invalid
