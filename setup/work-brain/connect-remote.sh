@@ -13,8 +13,9 @@
 # history, and when gh can see it, it must be private. Afterwards it checks
 # the org's base repository permission and the org's GitHub App
 # installations, and warns, with the fix, when org members or an app
-# installed on all repositories could read the repository. Create the empty private repository
-# first (setup/work-brain/CHECKLIST.md, "Connect a remote").
+# installed on all repositories could read the repository. Create the empty
+# private repository first (setup/work-brain/CHECKLIST.md, "Connect a
+# remote").
 # Env: BINNACLE_GH (gh).
 set -eu
 
