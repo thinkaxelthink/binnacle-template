@@ -25,7 +25,8 @@ check() { # description, command...
 
 scripts=(.githooks/pre-commit bin/binnacle-run bin/binnacle-import bin/binnacle-nightly setup/common/lib.sh
   setup/common/install-hooks.sh setup/github/setup.sh setup/shoyu/setup.sh setup/shoyu/nightly.sh
-  setup/workmac/setup.sh test/selftest.sh)
+  setup/workmac/setup.sh setup/work-brain/lib.sh setup/work-brain/setup.sh setup/work-brain/connect-remote.sh
+  test/selftest.sh)
 
 # --- static checks -------------------------------------------------------------
 for s in "${scripts[@]}"; do
@@ -70,6 +71,8 @@ case "$1 $2" in
     for a in "$@"; do [ "$prev" = --body-file ] && cp "$a" "$STUB_BODY"; prev=$a; done
     echo "https://github.com/example/binnacle/pull/1"; exit 0 ;;
   "pr merge") exit 0 ;;
+  "api orgs/"*) [ "${STUB_ORG_PERM:-}" = FAIL ] && exit 1; echo "${STUB_ORG_PERM:-}"; exit 0 ;;
+  "api repos/"*) [ -n "${STUB_REPO_PRIVATE:-}" ] || exit 1; echo "$STUB_REPO_PRIVATE"; exit 0 ;;
 esac
 exit 0
 EOF
@@ -582,6 +585,152 @@ check "nightly.sh uninstall: plist removed and job unloaded" \
   bash -c 'test ! -e "$1" && test ! -e "$2"' _ "$plist" "$T/launchctl.loaded"
 check "nightly.sh uninstall: idempotent" nightly_sh "$NS" uninstall
 check "nightly.sh status: exits 0 when not installed" nightly_sh "$NS" status
+
+# --- setup/work-brain (company brain on a work machine) -------------------------------------
+# A throwaway HOME with a personal ~/binnacle that must never change. The
+# profile runs from the seed checkout (the template as committed).
+WH=$T/wbhome
+mkdir -p "$WH"
+git clone -q "$T/remote.git" "$WH/binnacle"
+printf 'personal note\n' >"$WH/binnacle/soundings/mine.md"
+personal_sum() { (cd "$WH/binnacle" && find . -path ./.git/index -prune -o -type f -print | LC_ALL=C sort | xargs cksum); }
+personal_before=$(personal_sum)
+wblib() { bash -c '. "$1/setup/common/lib.sh"; . "$1/setup/work-brain/lib.sh"; shift; "$@"' _ "$repo" "$@"; }
+check "work-brain: slug lowercases and joins words" test "$(wblib wb_slug 'Acme Engineering')" = acme-engineering
+check "work-brain: slug squeezes runs and trims dashes" test "$(wblib wb_slug '--ACME__Eng!!--')" = acme-eng
+check "work-brain: name binnacle-<org>-<user>" \
+  test "$(wblib wb_name Acme-Engineering JDoe)" = binnacle-acme-engineering-jdoe
+check "work-brain: name refuses an org with nothing left after slugging" expect_fail wblib wb_name '!!!' jdoe
+
+B=$WH/binnacle-acme-engineering-jdoe
+wb_setup() { # args... -> setup from the seed checkout, output in $T/wb.out
+  env HOME="$WH" "$T/seed/setup/work-brain/setup.sh" "$@" >"$T/wb.out" 2>&1
+}
+global_before=$(cat "$T/gitconfig")
+check "work-brain setup: refuses without --org when not on a terminal" expect_fail wb_setup --user jdoe </dev/null
+check "work-brain setup: creates the brain, no remote" wb_setup --org Acme-Engineering --user JDoe --git-email jdoe@acme.example
+check "work-brain setup: default folder ~/binnacle-<org>-<user>" test -d "$B/.git"
+check "work-brain setup: one commit on main" test "$(git -C "$B" rev-list --count main 2>/dev/null)" = 1
+check "work-brain setup: clean tree after the first commit" test -z "$(git -C "$B" status --porcelain)"
+check "work-brain setup: no remote" test -z "$(git -C "$B" remote)"
+check "work-brain setup: local only" test "$(git -C "$B" config binnacle.localOnly)" = true
+check "work-brain setup: runs the AI writer (wiki-writer)" test "$(git -C "$B" config binnacle.role)" = wiki-writer
+check "work-brain setup: token item named after the brain" \
+  test "$(git -C "$B" config binnacle.ghTokenItem)" = binnacle-acme-engineering-jdoe-gh-token
+check "work-brain setup: hook installed" test "$(git -C "$B" config --local core.hooksPath)" = .githooks
+check "work-brain setup: vault-only work email" test "$(git -C "$B" config --local user.email)" = jdoe@acme.example
+check "work-brain setup: user.name defaults to the GitHub user" test "$(git -C "$B" config --local user.name)" = jdoe
+check "work-brain setup: global git config untouched" test "$(cat "$T/gitconfig")" = "$global_before"
+check "work-brain setup: CLAUDE.md states the company content limits" grep -q "payment data, minors' names, health or" "$B/CLAUDE.md"
+check "work-brain setup: CLAUDE.md names no personal machine" bash -c '! grep -q shoyu "$1"' _ "$B/CLAUDE.md"
+check "work-brain setup: CLAUDE.md drops the personal scope" bash -c '! grep -q "Scope is personal" "$1"' _ "$B/CLAUDE.md"
+check "work-brain setup: run prompt skips the limited material" grep -q 'health or waiver records' "$B/bin/binnacle-run.prompt.md"
+check "work-brain setup: template CLAUDE.md unchanged" bash -c 'grep -q "Scope is personal" "$1"' _ "$repo/CLAUDE.md"
+check "work-brain hook: rejects a file over the cap" expect_fail env BINNACLE_MAX_FILE_BYTES=4 \
+  bash -c 'printf 12345 >"$1/raw/inbox/big.md" && git -C "$1" add -A && git -C "$1" commit -qm big' _ "$B"
+git -C "$B" reset -q --hard
+git -C "$B" clean -qfdx
+check "work-brain hook: rejects when gitleaks flags" expect_fail env BINNACLE_GITLEAKS="$T/stubs/gitleaks-fail" \
+  bash -c 'printf x >"$1/soundings/a.md" && git -C "$1" add -A && git -C "$1" commit -qm a' _ "$B"
+git -C "$B" reset -q --hard
+git -C "$B" clean -qfdx
+check "work-brain setup: re-run is safe" wb_setup --org acme-engineering --user jdoe
+check "work-brain setup: re-run adds no commit" test "$(git -C "$B" rev-list --count main)" = 1
+check "work-brain setup: re-run from the vault's own copy" env HOME="$WH" "$B/setup/work-brain/setup.sh" --org acme-engineering --user jdoe
+
+# Collisions: nothing but a new folder or this brain's own vault.
+mkdir -p "$WH/foreign"
+check "work-brain collision: refuses an existing foreign folder" expect_fail wb_setup --org acme --user jdoe --dir "$WH/foreign"
+check "work-brain collision: foreign folder left empty" test -z "$(ls -A "$WH/foreign")"
+git init -q "$WH/other-repo"
+check "work-brain collision: refuses an unrelated git repo" expect_fail wb_setup --org acme --user jdoe --dir "$WH/other-repo"
+check "work-brain collision: refuses another brain's vault" expect_fail wb_setup --org acme-engineering --user someone --dir "$B"
+check "work-brain collision: refuses ~/binnacle" expect_fail wb_setup --org acme --user jdoe --dir "$WH/binnacle"
+check "work-brain collision: refuses a folder inside ~/binnacle" expect_fail wb_setup --org acme --user jdoe --dir "$WH/binnacle/brain"
+ln -s "$WH/binnacle" "$WH/binnacle-acme-jdoe"
+check "work-brain collision: refuses a symlink to ~/binnacle" expect_fail wb_setup --org acme --user jdoe
+rm "$WH/binnacle-acme-jdoe"
+git -C "$B" remote add origin "$T/elsewhere.git"
+check "work-brain collision: refuses a vault whose origin points elsewhere" expect_fail wb_setup --org acme-engineering --user jdoe
+check "work-brain collision: says origin points elsewhere" grep -q 'points elsewhere' "$T/wb.out"
+git -C "$B" remote remove origin
+check "work-brain collision: refuses to copy from a vault with content" expect_fail \
+  env HOME="$WH" "$V/setup/work-brain/setup.sh" --org acme --user jdoe2
+check "work-brain collision: content refusal creates nothing" test ! -e "$WH/binnacle-acme-jdoe2"
+
+# Local-only runs: no remote, no gh; main is fast-forwarded to the run.
+: >"$T/gh.log"
+printf 'A work idea.\n' >"$B/raw/inbox/work-idea.md"
+git -C "$B" add -A
+git -C "$B" commit -qm capture
+brun() { "$B/bin/binnacle-run" "$@" >"$T/brun.out" 2>&1; }
+check "work-brain run --dry-run: exits 0" brun --dry-run
+check "work-brain run --dry-run: says local only" grep -q 'local only: no push, no PR' "$T/brun.out"
+check "work-brain run --dry-run: lists the source" grep -q 'raw/inbox/work-idea.md' "$T/brun.out"
+main_before=$(git -C "$B" rev-parse main)
+check "work-brain run: ok run exits 0" env STUB_CLAUDE_MODE=ok "$B/bin/binnacle-run" >"$T/brun.out" 2>&1
+check "work-brain run: main fast-forwarded" git -C "$B" merge-base --is-ancestor "$main_before" main
+check "work-brain run: main moved" test "$(git -C "$B" rev-parse main)" != "$main_before"
+check "work-brain run: source moved on main" bash -c 'ls "$1"/raw/sources/*/work-idea.md' _ "$B"
+check "work-brain run: wiki page on main" test -f "$B/wiki/concepts/stub-concept.md"
+check "work-brain run: no run branch left" test -z "$(git -C "$B" branch --list 'binnacle-run/*')"
+check "work-brain run: no GitHub call" test ! -s "$T/gh.log"
+check "work-brain run: still no remote" test -z "$(git -C "$B" remote)"
+check "work-brain run: audit note says local only" bash -c 'grep -q "^- PR: none (local only" "$1"/audit/runs/*.md' _ "$B"
+check "work-brain run: audit note merged pending" bash -c 'grep -q "^merged: pending$" "$1"/audit/runs/*.md' _ "$B"
+printf 'Another work idea.\n' >"$B/raw/inbox/second.md"
+git -C "$B" add -A
+git -C "$B" commit -qm capture2
+main_before=$(git -C "$B" rev-parse main)
+sleep 1
+check "work-brain run: Claude failure exits non-zero" expect_fail env STUB_CLAUDE_MODE=crash "$B/bin/binnacle-run"
+check "work-brain run: failed run leaves main alone" test "$(git -C "$B" rev-parse main)" = "$main_before"
+check "work-brain run: failed run keeps its branch" test -n "$(git -C "$B" branch --list 'binnacle-run/*')"
+check "work-brain run: refuses while a run branch waits" expect_fail env STUB_CLAUDE_MODE=ok "$B/bin/binnacle-run"
+git -C "$B" for-each-ref --format='%(refname:short)' 'refs/heads/binnacle-run/*' | xargs git -C "$B" branch -q -D
+check "work-brain run: no GitHub call on failure either" test ! -s "$T/gh.log"
+
+# Org base permission: warns with the fix, never blocks.
+bp() { env STUB_ORG_PERM="$1" bash -c '. "$2/setup/common/lib.sh"; . "$2/setup/work-brain/lib.sh"; wb_base_permission acme' _ "$1" "$repo" >"$T/bp.out" 2>&1; }
+check "base permission: none is ok" bp none
+check "base permission: none says visible only to you and the owners" grep -q 'visible only to you and the acme owners' "$T/bp.out"
+check "base permission: read warns but does not fail" bp read
+check "base permission: read names the fix" grep -q "base repository permission is 'read'.*Base permissions: No permission" "$T/bp.out"
+check "base permission: unreadable value says so, gives the manual check" bp ""
+check "base permission: unreadable mentions owners and the manual check" grep -q 'only to org owners.*check by hand' "$T/bp.out"
+check "base permission: API failure warns, does not fail" bp FAIL
+check "base permission: API failure gives the manual check" grep -q 'could not read org .acme.*Check it by hand' "$T/bp.out"
+check "base permission: asked the org endpoint" grep -q 'gh api orgs/acme --jq' "$T/gh.log"
+
+# Connecting a remote: explicit, re-checks collisions, then warns on base permission.
+mkdir -p "$T/gh-acme"
+BR=$T/gh-acme/binnacle-acme-engineering-jdoe.git
+git init -q --bare "$BR"
+connect() { env STUB_ORG_PERM=read "$B/setup/work-brain/connect-remote.sh" "$@" >"$T/connect.out" 2>&1; }
+git init -q --bare "$T/gh-acme/wrong-name.git"
+check "connect: refuses a repository with another name" expect_fail connect --url "$T/gh-acme/wrong-name.git"
+check "connect: refuses a public GitHub repository" expect_fail env STUB_REPO_PRIVATE=false \
+  "$B/setup/work-brain/connect-remote.sh" --url https://github.com/acme-engineering/binnacle-acme-engineering-jdoe.git
+FR=$T/gh-foreign/binnacle-acme-engineering-jdoe.git
+git clone -q --bare "$T/remote.git" "$FR"
+check "connect: refuses a repository holding other history" expect_fail connect --url "$FR"
+check "connect: foreign history adds no origin" test -z "$(git -C "$B" remote)"
+check "connect --dry-run: exits 0" connect --url "$BR" --dry-run
+check "connect --dry-run: changes nothing" bash -c 'test -z "$(git -C "$1" remote)" && test "$(git -C "$1" config binnacle.localOnly)" = true && test -z "$(git -C "$2" for-each-ref)"' _ "$B" "$BR"
+check "connect: exits 0" connect --url "$BR"
+check "connect: origin set" test "$(git -C "$B" remote get-url origin)" = "$BR"
+check "connect: main pushed" test "$(git -C "$BR" rev-parse main)" = "$(git -C "$B" rev-parse main)"
+check "connect: leaves local-only mode" expect_fail git -C "$B" config --get binnacle.localOnly
+check "connect: warns on a readable base permission" grep -q "base repository permission is 'read'" "$T/connect.out"
+check "connect: re-run is safe" connect --url "$BR"
+check "connect: setup re-run accepts the connected origin" wb_setup --org acme-engineering --user jdoe
+check "connect: refuses a different repository once connected" expect_fail connect --url "$T/gh-acme2/binnacle-acme-engineering-jdoe.git"
+git -C "$B" remote set-url origin "$T/elsewhere/binnacle-acme-engineering-jdoe.git"
+check "connect: setup refuses an origin changed by hand" expect_fail wb_setup --org acme-engineering --user jdoe
+git -C "$B" remote set-url origin "$BR"
+check "connect: refuses to run in ~/binnacle" expect_fail \
+  env HOME="$WH" "$WH/binnacle/setup/work-brain/connect-remote.sh" --url "$BR"
+check "work-brain: personal ~/binnacle untouched" test "$(personal_sum)" = "$personal_before"
 
 printf '\n%s passed, %s failed\n' "$passed" "$failed"
 if [ "$failed" -gt 0 ]; then

@@ -108,6 +108,24 @@ different names:
 Each brain has its own repo, tokens, audit trail and wiki; nothing is
 shared but this template.
 
+## A company brain on a work machine
+
+A separate profile, `setup/work-brain/`, makes a work brain: a second
+vault for your job, beside `~/binnacle`, named
+`binnacle-<github org>-<github user>` (e.g.
+`binnacle-acme-engineering-jdoe`, at `~/binnacle-acme-engineering-jdoe`).
+The work machine runs the AI writer, on demand. It starts with no remote
+(local commits; the pre-commit hook and secret scan run locally, and
+`bin/binnacle-run` fast-forwards `main` instead of opening a PR) until
+`setup/work-brain/connect-remote.sh` connects a private repository in the
+organization. Same hook, scan and 10 MB cap; company material is allowed
+there, but never customer or member personal data, payment data, minors'
+names, health or waiver records, or credentials. Once the organization's
+base repository permission is "No permission", the brain is visible only to
+its user and the organization's owners. The setup refuses colliding
+folders and remotes and never touches `~/binnacle`; the personal vault and
+its setup are unchanged. Steps: `setup/work-brain/CHECKLIST.md`.
+
 ## Self-test
 
 ```sh
@@ -120,7 +138,9 @@ the hook (size cap, gitleaks failure, fail closed) and `bin/binnacle-run`
 violation, with stubbed `claude` and `gh`), `bin/binnacle-import` (branch
 creation, the import marker, out-of-zone refusal, size-cap stop, no
 auto-merge), plus `bin/binnacle-nightly` and `setup/shoyu/nightly.sh`
-(stubbed `binnacle-run` and `launchctl`), against
+(stubbed `binnacle-run` and `launchctl`), and the work-brain profile
+(name slugging, collision refusals, local-only setup and runs, connecting
+a remote, the base-permission check with a stubbed `gh`), against
 throwaway repositories. CI runs it on changes
 to scripts (`.github/workflows/selftest.yml`).
 
