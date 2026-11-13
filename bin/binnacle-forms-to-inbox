@@ -28,6 +28,9 @@
 #   --date-order dmy|mdy     day and month order of dates like 05/11/2026;
 #                            needed when no day or month in the export is
 #                            over 12 (refused otherwise, never guessed)
+#   --within-window          with --from and --to: refuse (exit 3) when a
+#                            response has no date inside the window, naming
+#                            its file and row (setup/forms/mover.sh uses it)
 #   --vault DIR              default: the vault this script belongs to
 #   --stop-list FILE         terms to refuse, one per line (default
 #                            <vault>/.binnacle/forms-stoplist, gitignored)

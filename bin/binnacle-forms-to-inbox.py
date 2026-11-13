@@ -211,7 +211,8 @@ SERIAL = re.compile(r"^\d{5}(?:\.\d+)?$")
 
 
 def parse_dates(values, order=None):
-    """Dates of the given timestamp strings, or None when one cannot be read.
+    """Dates of the given timestamp strings, in order, or None when one
+    cannot be read.
 
     Day and month order for d/m/y forms: ORDER (dmy or mdy) when given, else
     told from a number over 12; refused when the data cannot tell."""
@@ -230,10 +231,11 @@ def parse_dates(values, order=None):
         if not m:
             return None
         y = int(m.group(3))
-        local.append((int(m.group(1)), int(m.group(2)), y + 2000 if y < 100 else y))
+        local.append((len(out), int(m.group(1)), int(m.group(2)), y + 2000 if y < 100 else y))
+        out.append(None)
     if local:
-        day_first = any(a > 12 for a, _, _ in local)
-        month_first = any(b > 12 for _, b, _ in local)
+        day_first = any(a > 12 for _, a, _, _ in local)
+        month_first = any(b > 12 for _, _, b, _ in local)
         if day_first and month_first:
             return None
         if order:
@@ -241,8 +243,8 @@ def parse_dates(values, order=None):
         elif not day_first and not month_first:
             raise Stop("cannot tell day from month in the response dates; pass --date-order dmy or mdy, "
                        "or --from and --to (YYYY-MM-DD)", 2)
-        for a, b, y in local:
-            out.append((y, b, a) if day_first else (y, a, b))
+        for k, a, b, y in local:
+            out[k] = (y, b, a) if day_first else (y, a, b)
     try:
         return [datetime.date(*t) for t in out]
     except ValueError:
@@ -459,6 +461,7 @@ def parse_args(argv):
     p.add_argument("--from", dest="date_from")
     p.add_argument("--to", dest="date_to")
     p.add_argument("--date-order", choices=["dmy", "mdy"])
+    p.add_argument("--within-window", action="store_true")
     p.add_argument("--vault")
     p.add_argument("--stop-list")
     return p.parse_args(argv)
@@ -505,13 +508,20 @@ def main(argv):
     low = [h.lower() for h in headers]
     d_from = iso_date("--from", a.date_from) if a.date_from else None
     d_to = iso_date("--to", a.date_to) if a.date_to else None
-    if d_from is None or d_to is None:
+    if a.within_window and (d_from is None or d_to is None):
+        raise Stop("--within-window needs --from and --to", 2)
+    if d_from is None or d_to is None or a.within_window:
         tcol = next((low.index(c) for c in TIME_COLUMNS if c in low), None)
-        dates = None
-        if tcol is not None:
-            dates = parse_dates([cells[tcol] for _, _, cells in rows if cells[tcol].strip()], a.date_order)
+        stamped = [] if tcol is None else [(name, n, cells[tcol]) for name, n, cells in rows if cells[tcol].strip()]
+        dates = parse_dates([v for _, _, v in stamped], a.date_order) if stamped else None
         if not dates:
             raise Stop("cannot read the response timestamps; pass --from and --to (YYYY-MM-DD)", 2)
+        if a.within_window:
+            inside = {(name, n) for (name, n, _), d in zip(stamped, dates) if d_from <= d <= d_to}
+            outside = ["%s, row %d" % (name, n) for name, n, _ in rows if (name, n) not in inside]
+            if outside:
+                raise Stop("refused, nothing written: responses without a date in the window %s to %s:\n  %s"
+                           % (d_from, d_to, "\n  ".join(outside)), EXIT_REFUSED)
         d_from = d_from or min(dates)
         d_to = d_to or max(dates)
     if d_from > d_to:

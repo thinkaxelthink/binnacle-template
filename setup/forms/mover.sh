@@ -7,24 +7,26 @@
 #   --vault     the vault (default: the vault this script belongs to)
 #   --sync-dir  the synced folder the Power Automate flow writes to
 #               (default: git config binnacle.formsSyncDir in the vault)
-#   --purge     delete the FORMs' processed exports (once the window's note
-#               is ingested); converts nothing
+#   --purge     delete the FORMs' processed exports; refused while the
+#               last window's note is still in raw/inbox/forms/
 #   FORM        subfolders to process (default: every subfolder but processed)
 #
 # The synced folder holds one subfolder per form, where the flow writes one
 # .csv file per response (setup/forms/CHECKLIST.md). Each form's settings
 # live in the vault, in the gitignored <vault>/.binnacle/forms/<FORM>.conf,
-# as key=value lines: form_title, form_id, audience,
-# consent_notice_version (required), subject, identity, invited, platform
-# (default msforms), from and to (the window, YYYY-MM-DD), date_order (dmy
-# or mdy). For each form with new .csv files the converter rebuilds the
-# window's one note from those and every earlier export of the window,
-# kept in <sync dir>/processed/<FORM>/; once the note is written, the new
-# files move there too, and the note this run replaces, if its window
-# differed, is removed from raw/inbox/forms/. Exports are never deleted
-# but by --purge. A refusal or error keeps the files where they are and
-# moves on to the next form; the exit status is then 1. The synced folder
-# must be outside the vault.
+# as key=value lines: form_title, form_id, audience, consent_notice_version,
+# from and to (the window, YYYY-MM-DD) (required), subject, identity,
+# invited, platform (default msforms), date_order (dmy or mdy). For each
+# form with new .csv files the converter rebuilds the window's one note
+# from those and the window's earlier exports, kept in
+# <sync dir>/processed/<FORM>/<from>-to-<to>/, then the new files move
+# there too. The form is refused, nothing changed, when its settings lack
+# from or to, when a response is dated outside the window, when the last
+# window's note is still in raw/inbox/forms/ but from/to name another
+# window, or when this window's note has already left the inbox. Exports
+# are never deleted but by --purge. A refusal or error keeps the files
+# where they are and moves on to the next form; the exit status is then 1.
+# The synced folder must be outside the vault.
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd -P)
@@ -32,6 +34,15 @@ here=$(cd "$(dirname "$0")" && pwd -P)
 . "$here/../common/lib.sh"
 
 usage() { sed -n '5,12p' "$0" | sed 's/^# \{0,1\}//'; }
+
+# last_written FORM: set last_window and last_note from the form's record
+# of the note it last wrote.
+last_written() {
+  last_window="" last_note=""
+  if [ -f "$sync_dir/processed/$1/.note" ]; then
+    read -r last_window last_note <"$sync_dir/processed/$1/.note" || true
+  fi
+}
 
 vault="" sync_dir="" purge=0
 forms=()
@@ -63,12 +74,20 @@ inbox=$vault/raw/inbox/forms
 
 if [ "$purge" -eq 1 ]; then
   [ "${#forms[@]}" -gt 0 ] || bn_die "--purge needs the FORM folders to purge"
+  failed=0
   for form in "${forms[@]}"; do
-    case $form in "" | . | .. | */*) bn_die "'$form' is not a folder name" ;; esac
-    rm -rf -- "${sync_dir:?}/processed/$form"
+    case $form in "" | . | .. | */* | processed) bn_warn "skipping '$form': not a form folder name"; failed=1; continue ;; esac
+    last_written "$form"
+    if [ -n "$last_note" ] && [ -f "$inbox/$last_note" ]; then
+      bn_warn "not purging $form: its note raw/inbox/forms/$last_note is not ingested yet"
+      failed=1
+      continue
+    fi
+    [ ! -d "$sync_dir/processed/$form" ] \
+      || find "$sync_dir/processed/$form" -mindepth 1 -maxdepth 1 -type d -exec rm -rf -- {} +
     bn_ok "processed exports of $form deleted"
   done
-  exit 0
+  exit "$failed"
 fi
 
 if [ "${#forms[@]}" -eq 0 ]; then
@@ -101,7 +120,6 @@ failed=0
 for form in "${forms[@]}"; do
   case $form in "" | . | .. | */* | processed) bn_warn "skipping '$form': not a form folder name"; failed=1; continue ;; esac
   dir=$sync_dir/$form
-  done_dir=$sync_dir/processed/$form
   conf=$vault/.binnacle/forms/$form.conf
   bn_log "form $form"
   if [ ! -d "$dir" ]; then
@@ -121,17 +139,33 @@ for form in "${forms[@]}"; do
     failed=1
     continue
   fi
+  read_conf "$conf"
+  ymd='[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+  # shellcheck disable=SC2254 # $ymd is a pattern
+  case $conf_from:$conf_to in
+    $ymd:$ymd) ;;
+    *)
+      bn_warn "$conf needs the window as from=YYYY-MM-DD and to=YYYY-MM-DD; files kept"
+      failed=1
+      continue ;;
+  esac
+  window=$conf_from-to-$conf_to
+  done_dir=$sync_dir/processed/$form/$window
+  last_written "$form"
+  if [ -n "$last_note" ] && [ -f "$inbox/$last_note" ] && [ "$last_window" != "$window" ]; then
+    bn_warn "the note for window $last_window, raw/inbox/forms/$last_note, is not ingested yet; ingest it before moving to $window; files kept"
+    failed=1
+    continue
+  fi
+  if [ -n "$last_note" ] && [ ! -f "$inbox/$last_note" ] && [ "$last_window" = "$window" ]; then
+    bn_warn "the note for window $window has already left raw/inbox/forms/; set from= and to= for the next window, or remove the late file(s) from $dir; files kept"
+    failed=1
+    continue
+  fi
   earlier=()
   if [ -d "$done_dir" ]; then
     while IFS= read -r -d '' f; do earlier+=("$f"); done \
       < <(find "$done_dir" -mindepth 1 -maxdepth 1 -type f -name '*.csv' -print0 | LC_ALL=C sort -z)
-  fi
-  last_note=""
-  [ ! -f "$done_dir/.note" ] || last_note=$(cat "$done_dir/.note")
-  if [ "${#earlier[@]}" -gt 0 ] && { [ -z "$last_note" ] || [ ! -f "$inbox/$last_note" ]; }; then
-    bn_warn "the ${#earlier[@]} processed export(s) in $done_dir belong to a note no longer in raw/inbox/forms/ (already ingested?); if that window is done, run setup/forms/mover.sh --purge $form, then the mover again; files kept"
-    failed=1
-    continue
   fi
   clash=""
   for f in "${files[@]}"; do [ ! -e "$done_dir/${f##*/}" ] || clash=${f##*/}; done
@@ -140,26 +174,20 @@ for form in "${forms[@]}"; do
     failed=1
     continue
   fi
-  read_conf "$conf"
   args=(--vault "$vault" --platform "$conf_platform" --form-title "$conf_form_title"
     --form-id "$conf_form_id" --audience "$conf_audience"
-    --consent-notice-version "$conf_consent_notice_version")
+    --consent-notice-version "$conf_consent_notice_version"
+    --from "$conf_from" --to "$conf_to" --within-window)
   [ -z "$conf_subject" ] || args+=(--subject "$conf_subject")
   [ -z "$conf_identity" ] || args+=(--identity "$conf_identity")
   [ -z "$conf_invited" ] || args+=(--invited "$conf_invited")
-  [ -z "$conf_from" ] || args+=(--from "$conf_from")
-  [ -z "$conf_to" ] || args+=(--to "$conf_to")
   [ -z "$conf_date_order" ] || args+=(--date-order "$conf_date_order")
   if out=$("$converter" "${args[@]}" "${earlier[@]+"${earlier[@]}"}" "${files[@]}"); then
     printf '%s\n' "$out"
     note=$(printf '%s\n' "$out" | sed -n 's|^binnacle-forms-to-inbox: wrote raw/inbox/forms/\([^ /]*\.md\) .*|\1|p')
     [ -n "$note" ] || bn_die "cannot tell which note the converter wrote for $form"
     mkdir -p "$done_dir"
-    printf '%s\n' "$note" >"$done_dir/.note"
-    if [ -n "$last_note" ] && [ "$last_note" != "$note" ]; then
-      rm -f -- "${inbox:?}/$last_note"
-      bn_ok "replaced raw/inbox/forms/$last_note"
-    fi
+    printf '%s %s\n' "$window" "$note" >"$sync_dir/processed/$form/.note"
     mv -- "${files[@]}" "$done_dir/"
     bn_ok "${#files[@]} new response file(s) converted with ${#earlier[@]} earlier one(s); all kept in $done_dir"
   else

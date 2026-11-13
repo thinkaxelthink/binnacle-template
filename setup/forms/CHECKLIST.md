@@ -6,7 +6,7 @@ collection window. A Power Automate flow writes each response as a small
 CSV file into a OneDrive folder synced to the work machine; when a window
 closes, you run `setup/forms/mover.sh`, which converts those files with
 `bin/binnacle-forms-to-inbox` into `raw/inbox/forms/` and keeps them in a
-`processed/` folder beside them until you purge them.
+`processed/<form>/<window>/` folder beside them until you purge them.
 Nothing is committed for you: you review the note, then commit it, and
 the pre-commit secret scan runs as usual.
 
@@ -93,16 +93,20 @@ policies (HR, privacy, retention); they win over this checklist.
       form_id=<the id=... value from the form's link; only its hash reaches the vault>
       audience=Platform team
       consent_notice_version=v1
+      from=2026-11-02
+      to=2026-11-13
       identity=anonymous
       invited=8
       ```
 
-      Add `subject=<their name>` only for a survey about one person.
-      `platform` defaults to `msforms`. Optional: `from=` and `to=`
-      (YYYY-MM-DD) declare the window instead of taking it from the
-      response dates; `date_order=dmy` or `date_order=mdy` says how to
-      read dates like `05/11/2026`. The converter refuses such dates when
-      no day or month in them is over 12 and neither is set; it never
+      `from=` and `to=` (YYYY-MM-DD) are the collection window and are
+      required: the mover never infers one, and refuses the form when
+      either is missing or a response is dated outside the window (it
+      names the file and row, never the value). Add `subject=<their name>`
+      only for a survey about one person. `platform` defaults to
+      `msforms`. `date_order=dmy` or `date_order=mdy` says how to read
+      dates like `05/11/2026`; the converter refuses such dates when no
+      day or month in them is over 12 and neither is set; it never
       guesses.
 - [ ] **[work machine, human]** Write the stop-list,
       `~/binnacle-acme-engineering-jdoe/.binnacle/forms-stoplist`: one term
@@ -127,23 +131,30 @@ has closed.
 
       For each form with new `.csv` files it rebuilds the window's one
       note, `raw/inbox/forms/form-<hash>-<from>-to-<to>.md`, from the new
-      files and every earlier export of the window, then moves the new
-      files to `Binnacle forms/processed/<form>/`. Nothing is deleted, so
-      responses that sync late are not lost: run the mover again and the
-      note is rebuilt complete; if its window changed, the mover removes
-      the note it replaces, so the inbox keeps one note per form and window.
+      files and the window's earlier exports, then moves the new files to
+      `Binnacle forms/processed/<form>/<from>-to-<to>/`. Nothing is
+      deleted, so responses that sync late are not lost: while the note
+      is still in `raw/inbox/forms/`, run the mover again and the note is
+      rebuilt complete. Once the note has been ingested, late responses
+      for that window are refused.
 - [ ] **[work machine, human]** If the converter refused a form, it names
       the pattern class (email, phone, card, stop-list) and the column and
       row, never the value; the files stay. Remove the value from that
       response's `.csv` file (your own copy, in the form's folder or in
-      `processed/<form>/`), or delete the response in Forms and its file,
-      then run the mover again.
+      `processed/<form>/<window>/`), or delete the response in Forms and
+      its file, then run the mover again.
 - [ ] **[work machine, human]** Read the note. Then commit it (Obsidian
       Git, or `git add raw/inbox/forms` and `git commit`); the pre-commit
       secret scan runs. Then `bin/binnacle-run` as usual.
-- [ ] **[work machine, human]** Once `bin/binnacle-run` has ingested the
-      note, delete the window's exports before the next window opens
-      (otherwise the mover refuses the form, so windows never mix):
+- [ ] **[work machine, human]** Before the next window, set its `from=`
+      and `to=` in the form's `.conf`. The mover refuses a new window while
+      the last window's note is still in `raw/inbox/forms/`, so windows
+      never mix; once `bin/binnacle-run` has ingested it, the new window
+      starts with no earlier exports, and the old ones stay in
+      `processed/<form>/<old window>/`.
+- [ ] **[work machine, human]** Delete the processed exports when your
+      retention review allows (refused while the last window's note is
+      still waiting in `raw/inbox/forms/`):
 
       ```sh
       ~/binnacle-acme-engineering-jdoe/setup/forms/mover.sh --purge team-pulse
