@@ -150,17 +150,18 @@ How it behaves:
   `binnacle.ghTokenFile`, because the keychain is out of reach. The
   template does not set cron up.
 - **Notion import.** While an import is in progress (`git config
-  binnacle.importBranch` is set, or a local `import/*` branch exists in
-  `~/binnacle`), runs log "skipped: import in progress" and do nothing; the
-  first run after the import finishes picks up the inbox.
+  binnacle.importBranch` is set in `~/binnacle`), runs log "skipped: import
+  in progress" and do nothing; the first run after the import finishes
+  picks up the inbox. A local `import/*` branch left behind after the
+  import does not stop runs.
 - **One run at a time.** A run holds `~/binnacle/.git/binnacle-run.lock`;
   a run started meanwhile (by hand or by the schedule) logs "skipped:
   another binnacle-run is in progress". A lock left by a crashed run is
   cleared automatically.
 - **Obsidian Git.** The run works in a temporary worktree from
   `origin/main` and never checks out, commits or pushes in `~/binnacle`,
-  so Obsidian Git's pull and commit-and-sync carry on as usual. The only
-  shared step is the run's `git fetch`: if it collides with an Obsidian Git
-  pull at that moment, the night's run fails before it branches (logged)
-  and the next night runs normally. Captures Obsidian Git has not pushed by
+  so Obsidian Git's pull and commit-and-sync carry on as usual. The run's
+  `git fetch` writes only its own ref `refs/binnacle-run/base`; it never
+  touches `refs/remotes/origin/main` or `FETCH_HEAD`, which Obsidian Git's
+  pull uses. Captures Obsidian Git has not pushed by
   03:30 wait for the next night.

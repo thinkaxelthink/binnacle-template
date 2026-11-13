@@ -3,14 +3,15 @@
 #
 # Usage: bin/binnacle-run [--dry-run]
 #
-#   Notion import in progress (git config binnacle.importBranch is set, or a
-#   local import/* branch exists) -> "skipped: import in progress", exit 0:
-#   no branch, no PR.
+#   Notion import in progress (git config binnacle.importBranch is set)
+#   -> "skipped: import in progress", exit 0: no branch, no PR.
 #   another binnacle-run still running in this clone (lock
 #   .git/binnacle-run.lock) -> "skipped: another binnacle-run", exit 0.
 #   empty raw/inbox on origin/main -> say so, exit 0: no branch, no PR.
 #   otherwise, in a temporary worktree (your ~/binnacle checkout and
-#   Obsidian are never switched off main):
+#   Obsidian are never switched off main; origin/main is fetched into the
+#   run-private ref refs/binnacle-run/base, never into refs/remotes/origin/main
+#   or FETCH_HEAD, so Obsidian Git's pull is not disturbed):
 #     1. branch binnacle-run/<run-id> from origin/main
 #     2. move raw/inbox/* to raw/sources/<run-id>/ (content unchanged)
 #     3. Claude Code, headless, with bin/binnacle-run.prompt.md: ingest the
@@ -71,13 +72,11 @@ role=$(git -C "$root" config --get binnacle.role || true)
 [ -f "$prompt_file" ] || die "missing prompt file $prompt_file"
 
 # --- Notion import in progress -----------------------------------------------
-# bin/binnacle-import records its branch while an import is open; a local
-# import/* branch counts too. The run waits for it rather than racing it.
+# bin/binnacle-import records its branch while an import is open. The run
+# waits for it rather than racing it.
 import_branch=$(git -C "$root" config --get binnacle.importBranch || true)
-import_heads=$(git -C "$root" for-each-ref --format='%(refname:short)' refs/heads/import/ | tr '\n' ' ')
-import_heads=${import_heads% }
-if [ -n "$import_branch" ] || [ -n "$import_heads" ]; then
-  say "skipped: import in progress (binnacle.importBranch: ${import_branch:-unset}; import branches: ${import_heads:-none}) - no branch, no PR"
+if [ -n "$import_branch" ]; then
+  say "skipped: import in progress (binnacle.importBranch: $import_branch) - no branch, no PR"
   exit 0
 fi
 
@@ -149,8 +148,8 @@ if [ "$dry" -eq 1 ]; then
 else
   command -v "$CLAUDE" >/dev/null 2>&1 || die "Claude Code ('$CLAUDE') not found"
   command -v "$GH" >/dev/null 2>&1 || die "GitHub CLI ('$GH') not found"
-  git -C "$root" fetch --quiet "$REMOTE" "$BASE"
-  base_ref=$REMOTE/$BASE
+  base_ref=refs/binnacle-run/base
+  git -C "$root" fetch --quiet --no-write-fetch-head --refmap= "$REMOTE" "+refs/heads/$BASE:$base_ref"
 fi
 
 # --- inbox -------------------------------------------------------------------

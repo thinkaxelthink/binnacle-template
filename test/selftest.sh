@@ -191,16 +191,18 @@ check "run --dry-run: exits 0" run --dry-run
 check "run --dry-run: lists the source" grep -q 'raw/inbox/first-idea.md' "$T/run.out"
 check "run --dry-run: creates no branch" no_run_branches
 
-# A Notion import in progress (binnacle.importBranch, or a local import/*
-# branch) makes the run skip, even with sources waiting.
+# A Notion import in progress (binnacle.importBranch) makes the run skip,
+# even with sources waiting. A local import/* branch left after an import
+# does not.
 git -C "$V" config binnacle.importBranch import/notion-20261113
 check "import: binnacle.importBranch set -> run exits 0" run
 check "import: says skipped: import in progress" grep -q 'skipped: import in progress' "$T/run.out"
 check "import: --dry-run skips too" bash -c '"$1/bin/binnacle-run" --dry-run >"$2" 2>&1 && grep -q "skipped: import in progress" "$2"' _ "$V" "$T/run.out"
 git -C "$V" config --unset binnacle.importBranch
 git -C "$V" branch import/notion/20261113
-check "import: local import/* branch -> run exits 0" run
-check "import: branch named in the skip line" grep -q 'skipped: import in progress.*import/notion/20261113' "$T/run.out"
+check "import: leftover import/* branch -> --dry-run exits 0" run --dry-run
+check "import: leftover import/* branch does not skip" bash -c '! grep -q "skipped" "$1"' _ "$T/run.out"
+check "import: leftover import/* branch still lists the source" grep -q 'raw/inbox/first-idea.md' "$T/run.out"
 git -C "$V" branch -q -D import/notion/20261113
 check "import: skips create no run branch" no_run_branches
 check "import: skips make no GitHub call" test ! -s "$T/gh.log"
@@ -226,11 +228,18 @@ wait "$holder" 2>/dev/null || true
 echo "$$" >"$lock/pid"
 
 main_before=$(git -C "$V" rev-parse HEAD)
+# Obsidian Git's refs: the run must read origin's main without updating them.
+# A stale origin/main (inbox still empty there) proves the run used its own ref.
+git -C "$V" update-ref refs/remotes/origin/main "$main_before~1"
+rm -f "$V/.git/FETCH_HEAD"
 check "run: ok run exits 0" env STUB_CLAUDE_MODE=ok bash -c '"$1/bin/binnacle-run" >"$2" 2>&1' _ "$V" "$T/run.out"
 check "lock: stale lock (PID not a binnacle-run) broken" grep -q "removed a stale lock (pid $$)" "$T/run.out"
 check "lock: released after a run" test ! -e "$lock"
 check "lock: nothing left beside it" bash -c '! ls "$1/.git" | grep -q binnacle-run.lock' _ "$V"
 check "run: local checkout left on main, untouched" test "$(git -C "$V" rev-parse HEAD)" = "$main_before"
+check "run: refs/remotes/origin/main not updated" test "$(git -C "$V" rev-parse refs/remotes/origin/main)" = "$(git -C "$V" rev-parse "$main_before~1")"
+check "run: FETCH_HEAD not written" test ! -e "$V/.git/FETCH_HEAD"
+git -C "$V" update-ref refs/remotes/origin/main "$main_before"
 check "run: temporary worktree removed" test "$(git -C "$V" worktree list | wc -l | tr -d ' ')" = 1
 on_remote_branch ls-tree -r --name-only origin/latest-run >"$T/tree" 2>&1 || true
 check "run: source moved to raw/sources/<run-id>/" grep -Eq '^raw/sources/[0-9TZ]+/first-idea\.md$' "$T/tree"
