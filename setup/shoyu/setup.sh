@@ -30,12 +30,12 @@ bn_ok "binnacle.role = wiki-writer (bin/binnacle-run only runs where this is set
 git -C "$BINNACLE_DIR" config binnacle.ghTokenItem "$BINNACLE_REPO-gh-token"
 bn_ok "binnacle.ghTokenItem = $BINNACLE_REPO-gh-token (keychain item bin/binnacle-run reads for gh)"
 if [ -n "${BINNACLE_GH_TOKEN_FILE:-}" ]; then
-  if [ -f "$BINNACLE_GH_TOKEN_FILE" ]; then
+  if [ -f "$BINNACLE_GH_TOKEN_FILE" ] && [ ! -L "$BINNACLE_GH_TOKEN_FILE" ]; then
     token_file=$(bn_physical_path "$BINNACLE_GH_TOKEN_FILE")
     git -C "$BINNACLE_DIR" config binnacle.ghTokenFile "$token_file"
     bn_ok "binnacle.ghTokenFile = $token_file (used when the keychain item is unreachable)"
   else
-    problem "BINNACLE_GH_TOKEN_FILE '$BINNACLE_GH_TOKEN_FILE' is not a file; binnacle.ghTokenFile not set"
+    problem "BINNACLE_GH_TOKEN_FILE '$BINNACLE_GH_TOKEN_FILE' is not a regular file; binnacle.ghTokenFile not set"
   fi
 fi
 
