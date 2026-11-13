@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# binnacle-forms-to-inbox: turn a survey's responses export into one
+# scrubbed note per form per collection window in raw/inbox/forms/.
+#
+# Usage: bin/binnacle-forms-to-inbox [options] FILE...
+#
+#   FILE  a responses export: Microsoft Forms (.xlsx, or saved as .csv) or
+#         Google Forms / Sheets (.csv). Several files of the same form (one
+#         header row, e.g. one file per response from a Power Automate
+#         flow) make one note.
+#
+#   --form-title TEXT        the form's title (required)
+#   --form-id ID|LINK        the form's id or link (required); only its
+#                            sha256 (form_id_hash) reaches the vault
+#   --audience TEXT          who was asked: a team label, never names (required)
+#   --consent-notice-version TEXT
+#                            version of the notice respondents saw (required)
+#   --subject NAME           the one person the survey is about (optional);
+#                            the only name allowed in the answers
+#   --identity anonymous|pseudonymous|attributed
+#                            how the form collected responses (default
+#                            anonymous); the note never names respondents
+#   --invited N              how many people were asked (optional)
+#   --platform msforms|google
+#                            default: told from the header row
+#   --from DATE --to DATE    the collection window, YYYY-MM-DD (default: the
+#                            first and last response dates)
+#   --vault DIR              default: the vault this script belongs to
+#   --stop-list FILE         terms to refuse, one per line (default
+#                            <vault>/.binnacle/forms-stoplist, gitignored)
+#
+#   The note, raw/inbox/forms/form-<hash>-<from>-to-<to>.md, has
+#   front-matter type form-responses, form_title, form_id_hash, platform,
+#   audience, subject, collected_from/to, exported_at, respondents, invited,
+#   identity, consent_notice_version and retention_review (window end plus
+#   12 months). Respondent names, emails, ids and per-response timestamps
+#   are dropped; ratings (0-10 or a Likert scale) become a distribution and
+#   a median; free-text answers are labelled R1..Rn in a random order that
+#   differs every run. Running again for the same form and window replaces
+#   that note only. Nothing is committed: review the note, then commit it.
+#
+#   Exit 3, writing nothing, when any text that would reach the note
+#   matches an email, phone or card number pattern or a stop-list term
+#   (the subject's name excepted); it prints the pattern class and the
+#   column and row, never the value. Exit 2 on bad options, 1 on other
+#   errors. Needs python3 (standard library only).
+#
+# Env: BINNACLE_PYTHON (python3).
+set -eu
+
+usage() { sed -n '2,/^set -eu/p' "$0" | sed '$d; s/^# \{0,1\}//'; }
+
+case "${1:-}" in
+  -h | --help) usage; exit 0 ;;
+  "") usage >&2; exit 2 ;;
+esac
+
+PY=${BINNACLE_PYTHON:-python3}
+here=$(cd "$(dirname "$0")" && pwd -P)
+command -v "$PY" >/dev/null 2>&1 || {
+  printf 'binnacle-forms-to-inbox: error: %s not found (needed to read the export)\n' "$PY" >&2
+  exit 1
+}
+# -I: ignore PYTHON* variables, user site-packages and the current folder.
+exec "$PY" -I "$here/binnacle-forms-to-inbox.py" "$@"

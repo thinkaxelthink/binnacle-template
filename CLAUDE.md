@@ -18,7 +18,7 @@ contract material, or credentials, and no company system connects to it.
 
 | Path | What it holds | Who writes it | The LLM may |
 |---|---|---|---|
-| `raw/inbox/` | New sources waiting for ingest. The capture point. | Any device, by hand | read only |
+| `raw/inbox/` | New sources waiting for ingest. The capture point. | Any device, by hand; `raw/inbox/forms/` also by `bin/binnacle-forms-to-inbox` (scrubbed survey responses) | read only |
 | `raw/` (everything else, e.g. `raw/sources/<run-id>/`) | Ingested sources, immutable. | `bin/binnacle-run` moves files here from the inbox, byte for byte | read only |
 | `soundings/` | Hand-written notes. `soundings/notion/` holds the Notion slip box, imported once (`setup/notion/`); same rules. | Any device, by hand; `soundings/notion/` by the owner's import PR | read only, and link to them |
 | `wiki/` | The wiki: pages, `index.md`, `log.md`. | Claude Code on shoyu only | read and write |
@@ -40,6 +40,9 @@ Rules that follow from the zones:
   pull request that passes the secret scan (`bin/binnacle-run` does this).
 - Only shoyu (the clone with `git config binnacle.role wiki-writer`) runs AI
   writes. On any other machine, do not modify the vault at all.
+- `wiki/people/` is written only while the people zone is on (see
+  "People zone"); `bin/binnacle-run` reverts any other change there and
+  fails the run.
 
 ## Wiki layout
 
@@ -51,6 +54,8 @@ wiki/
   concepts/       ideas, patterns, principles, architectural learnings
   entities/       named things: tools, systems, projects, books, people of public record
   syntheses/      comparisons, overviews and filed answers that span pages
+  people/         optional, off by default: one page per survey subject
+                  (see "People zone")
 ```
 
 Page conventions:
@@ -61,7 +66,7 @@ Page conventions:
 
   ```yaml
   ---
-  type: source | concept | entity | synthesis
+  type: source | concept | entity | synthesis | person
   summary: one line, the same line used in index.md
   sources:
     - "[[raw/sources/<run-id>/<file>]]"
@@ -79,11 +84,53 @@ Page conventions:
 - When a newer source disagrees with a page, keep both claims with their
   citations and flag the contradiction; do not silently overwrite.
 
+## Form-response sources
+
+`bin/binnacle-forms-to-inbox` turns a survey's responses export into one
+note per form per collection window in `raw/inbox/forms/`, with
+front-matter `type: form-responses` (form title, a hash of the form id,
+platform, audience, an optional `subject`, the window, respondents and
+invited counts, identity, consent notice version, retention review date).
+Before the note was written it dropped respondent names, emails, ids and
+timestamps, refused anything matching an email, phone or card pattern or
+the local stop-list (the subject's name excepted), summarised ratings as a
+distribution and a median, and labelled free-text answers R1..Rn in an
+order that is random per note. Ingest such a source like any other, with
+these rules:
+
+- **One source page per survey window** in `wiki/sources/`: form title,
+  window, audience, respondents of invited, identity, the rating
+  summaries, and the themes of the free-text answers with how many
+  respondents raised each.
+- **Topic syntheses.** Themes that recur across surveys or windows go to
+  one page per topic in `wiki/syntheses/`, updated window by window with a
+  citation to each survey note, so trends stay visible.
+- **Themes, not verbatim quotes, about a subject.** When the note names a
+  `subject`, write about that person only in paraphrased themes with
+  counts ("3 of 7 respondents ..."), never in quotes. Elsewhere quote
+  sparingly, and never a passage that names or points to anyone.
+- **Respondents stay anonymous.** Never guess or hint at who wrote an
+  answer. R labels are random per note: never carry them into the wiki.
+
+### People zone
+
+`wiki/people/` is off by default. It is for a manager's surveys about
+their own direct reports, and it is on only in a vault whose owner ran
+`git config binnacle.peopleZone true` (turn it off again with
+`git config --unset binnacle.peopleZone`); `bin/binnacle-run` tells the
+LLM which in the run prompt. While it is on: one page per survey subject,
+`wiki/people/<name>.md` with `type: person`, holding that person's themes
+over time from the form-response sources whose `subject` names them, each
+cited, under the theme rule above, and listed in `index.md` under People.
+While it is off: never create or change anything in `wiki/people/`; a
+subject's themes stay on the survey's source page.
+
 ## index.md
 
 `wiki/index.md` is the content catalog and the first file to read for any
 query. It lists every wiki page once, grouped under the headings Sources,
-Concepts, Entities and Syntheses, one line each:
+Concepts, Entities and Syntheses (and People, while the people zone is
+on), one line each:
 
 ```
 - [[wiki/concepts/event-sourcing]] - Storing state as an append-only log of events. (3 sources)

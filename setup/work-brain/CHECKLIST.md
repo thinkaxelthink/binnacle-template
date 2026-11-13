@@ -38,7 +38,11 @@ so Claude Code skips such sources:
 - no credentials (passwords, API keys, tokens, private keys, connection
   strings).
 
-No company system connects to the vault. Follow your employer's own
+Survey responses may cover HR topics when you are the manager running the
+survey. No company system connects to the vault, with one exception: your
+own Microsoft Forms flow may feed `raw/inbox/forms/`, and only through the
+scrub in `bin/binnacle-forms-to-inbox`, which runs before anything is
+committed (`setup/forms/CHECKLIST.md`). Follow your employer's own
 policies on what may be stored where; they win over this list.
 
 ## Who can see it

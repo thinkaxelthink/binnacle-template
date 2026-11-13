@@ -18,7 +18,9 @@
 #        sources per CLAUDE.md, flag-only lint, append wiki/log.md, fill the
 #        lint section of audit/runs/<run-id>.md
 #     4. zone guard: anything changed outside wiki/ and audit/ is reverted
-#        and fails the run; wiki/log.md must only have been appended to
+#        and fails the run, and so is anything in wiki/people/ unless the
+#        people zone is on (git config binnacle.peopleZone true, CLAUDE.md);
+#        wiki/log.md must only have been appended to
 #     5. write the audit note, commit, push, open a PR, enable auto-merge
 #        (GitHub merges once the gitleaks check passes)
 #   On failure the PR stays open without auto-merge and the audit note says
@@ -80,6 +82,8 @@ role=$(git -C "$root" config --get binnacle.role || true)
 [ -f "$prompt_file" ] || die "missing prompt file $prompt_file"
 local_only=0
 [ "$(git -C "$root" config --get binnacle.localOnly || true)" != true ] || local_only=1
+people_zone=off
+[ "$(git -C "$root" config --get binnacle.peopleZone || true)" != true ] || people_zone=on
 
 # --- Notion import in progress -----------------------------------------------
 # bin/binnacle-import records its branch while an import is open. The run
@@ -344,7 +348,8 @@ write_note running "" "" false "$region"
 
 # --- Claude ------------------------------------------------------------------
 source_list=$(printf -- '- %s\n' "${moved[@]}")
-prompt=$(BN_RUN_ID=$run_id BN_DATE=$day BN_SOURCES=$source_list BN_NOTE=$note BN_BRANCH=$branch awk '
+prompt=$(BN_RUN_ID=$run_id BN_DATE=$day BN_SOURCES=$source_list BN_NOTE=$note BN_BRANCH=$branch \
+  BN_PEOPLE_ZONE=$people_zone awk '
   function rep(s, k, v,   i, out) {
     out = ""
     while ((i = index(s, k)) > 0) { out = out substr(s, 1, i - 1) v; s = substr(s, i + length(k)) }
@@ -356,6 +361,7 @@ prompt=$(BN_RUN_ID=$run_id BN_DATE=$day BN_SOURCES=$source_list BN_NOTE=$note BN
     line = rep(line, "{{SOURCES}}", ENVIRON["BN_SOURCES"])
     line = rep(line, "{{AUDIT_NOTE}}", ENVIRON["BN_NOTE"])
     line = rep(line, "{{BRANCH}}", ENVIRON["BN_BRANCH"])
+    line = rep(line, "{{PEOPLE_ZONE}}", ENVIRON["BN_PEOPLE_ZONE"])
     print line
   }' "$prompt_file")
 
@@ -378,7 +384,10 @@ fi
 # --- zone guard ----------------------------------------------------------------
 violations=()
 while IFS= read -r -d '' p; do
-  case "$p" in wiki/* | audit/*) continue ;; esac
+  case "$p" in
+    wiki/people/*) [ "$people_zone" = off ] || continue ;;
+    wiki/* | audit/*) continue ;;
+  esac
   violations+=("$p")
 done < <(git diff -z --name-only HEAD; git ls-files -z --others --exclude-standard)
 
@@ -390,7 +399,7 @@ if [ "${#violations[@]}" -gt 0 ]; then
       rm -f -- "$p"
     fi
   done
-  fail "zone violation, reverted changes outside wiki/ and audit/: ${violations[*]}"
+  fail "zone violation, reverted changes outside wiki/ and audit/ (or in wiki/people/ with the people zone off): ${violations[*]}"
 fi
 
 if [ "$status" = ok ]; then
