@@ -53,7 +53,7 @@ token: it reaches every repository you own.
 
 | Device | Repository access | Permissions | Stored in |
 |---|---|---|---|
-| shoyu | Only select repositories: `binnacle` | Contents: read and write; Pull requests: read and write | macOS keychain (git credential helper, and item `binnacle-gh-token` for `gh`) |
+| shoyu | Only select repositories: `binnacle` | Contents: read and write; Pull requests: read and write | macOS keychain (git credential helper, and item `binnacle-gh-token` for `gh`, or a mode-600 file when the keychain is unreachable: setup/shoyu/CHECKLIST.md) |
 | work Mac | Only select repositories: `binnacle` | Contents: read and write | macOS keychain (git credential helper) |
 | iPhone | Only select repositories: `binnacle` | Contents: read and write | GitSync |
 
