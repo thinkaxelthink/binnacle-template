@@ -163,7 +163,10 @@ auto-merge), plus `bin/binnacle-nightly` and `setup/shoyu/nightly.sh`
 a remote, the base-permission and app-installation checks with a stubbed
 `gh`), the survey converter and mover (csv and xlsx exports of both
 platforms, the scrub, refusals, ratings, the R1..Rn shuffle, re-runs) and
-the people-zone guard, against throwaway repositories. CI runs it on
+the people-zone guard, against throwaway repositories built from the
+template's own files only, so it also runs inside a vault with content.
+In a work brain it skips the work-brain setup, run and connect checks,
+since its `CLAUDE.md` already carries the work rules. CI runs it on
 changes to scripts (`.github/workflows/selftest.yml`).
 
 ## Roadmap
