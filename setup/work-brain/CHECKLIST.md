@@ -185,7 +185,10 @@ repositories (GitHub Team or Enterprise).
       `binnacle.localOnly`, then checks the base permission and the app
       installations. `--url` picks
       another address for the same repository name; GitHub owner and
-      repository names are compared case-insensitively, as GitHub does.
+      repository names are compared case-insensitively, ignoring a
+      trailing `.git` or `/`, as GitHub does. The reachability check
+      already authenticates through `gh`, so there is no username
+      prompt.
 
       It also sets this vault's git credential helper for
       `https://github.com` (vault-local, never `--global`) to `gh` by its

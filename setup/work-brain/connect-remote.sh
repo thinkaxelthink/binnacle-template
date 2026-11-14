@@ -9,7 +9,8 @@
 #
 # Before pushing it re-runs the collision checks: the vault must be a work
 # brain (never ~/binnacle), any existing origin must be this repository
-# (GitHub owner and name compared case-insensitively), the
+# (GitHub owner and name compared case-insensitively, ignoring a trailing
+# .git or /), the
 # repository must be reachable and hold nothing but this brain's own
 # history, and when gh can see it, it must be private. It sets this vault's
 # credential helper for https://github.com to gh by absolute path, so git
@@ -74,6 +75,9 @@ case $gh_path in
   /*) ;;
   *) bn_die "gh not found ('$GH'); install it (brew install gh) and log in (CHECKLIST.md), then re-run" ;;
 esac
+gh_quoted=$(printf '%s' "$gh_path" | sed "s/'/'\\\\''/g")
+gh_helper="!'$gh_quoted' auth git-credential"
+helper_key=credential.https://github.com.helper
 
 # GitHub visibility, when gh can see the repository.
 owner_repo=""
@@ -93,7 +97,7 @@ else
 fi
 
 # What the remote already holds must be this brain's own history.
-heads=$(git -C "$vault" ls-remote --heads "$url" 2>&1) \
+heads=$(git -c "$helper_key=" -c "$helper_key=$gh_helper" -C "$vault" ls-remote --heads "$url" 2>&1) \
   || bn_die "cannot read $url. Create the empty private repository first and make sure your credentials can reach it (CHECKLIST.md).
 $heads"
 foreign=""
@@ -119,11 +123,9 @@ else
 fi
 git -C "$vault" config binnacle.remoteUrl "$url"
 # An empty entry first drops helpers inherited from the global config.
-helper_key=credential.https://github.com.helper
 git -C "$vault" config --local --unset-all "$helper_key" || true
 git -C "$vault" config --local --add "$helper_key" ""
-gh_quoted=$(printf '%s' "$gh_path" | sed "s/'/'\\\\''/g")
-git -C "$vault" config --local --add "$helper_key" "!'$gh_quoted' auth git-credential"
+git -C "$vault" config --local --add "$helper_key" "$gh_helper"
 bn_ok "credential helper for https://github.com (this vault only): $gh_path auth git-credential"
 git -C "$vault" push -q -u origin main || bn_die "git push failed; fix access and re-run (nothing else changed)"
 bn_ok "main pushed"
