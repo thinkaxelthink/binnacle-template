@@ -17,6 +17,10 @@ folder `team-pulse`; use your own.
 
 The scrub exists to keep personal contact details out of the vault and
 away from the agent that reads it.
+The intake is for feedback and survey forms only. Order, sign-up and
+registration forms are out of scope: they exist to collect contact
+details, which the scrub keeps out of the vault, and their records belong
+in a spreadsheet or order tool rather than in notes an agent reads.
 
 A work brain's rule is that no company system connects to it. This adds
 exactly one exception: **your own Microsoft Forms flow may feed
