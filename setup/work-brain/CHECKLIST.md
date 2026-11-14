@@ -110,6 +110,8 @@ It:
   `<user>@users.noreply.github.com`;
 - installs the gitleaks + 10 MB pre-commit hook and records the gitleaks
   path, then makes the first commit through it;
+- records the template commit it was built from
+  (`binnacle.templateBase`), where `update.sh` starts;
 - checks `git`, `claude`, `gh` and Obsidian (warnings only).
 
 ## In Obsidian
@@ -223,3 +225,45 @@ repositories (GitHub Team or Enterprise).
       `binnacle-run/<run-id>` branch, opens a PR and enables auto-merge,
       exactly like the personal vault on shoyu. Confirm the PR waits for
       `gitleaks`, then merges by itself.
+
+## Update from the template
+
+When the template gains fixes you want, bring the brain's template files
+(scripts, hook, `CLAUDE.md`, run prompt, checklists) up to date in one
+step. Your notes and the wiki are never touched.
+
+- [ ] **[work machine, human]** Pull the template checkout (outside the
+      vault, never the vault's own copy), commit or discard anything open in
+      the vault, and merge or delete any waiting `binnacle-update/*` branch.
+      Connected, pull and push first so `main` matches GitHub, and log
+      `gh` in. Then:
+
+      ```sh
+      git -C ~/src/binnacle-template pull
+      ~/src/binnacle-template/setup/work-brain/update.sh ~/binnacle-acme-engineering-jdoe
+      ```
+
+      It finds the template commit the brain was built from
+      (`git config binnacle.templateBase`, or for an older brain the
+      revision in its first commit message), rebuilds that commit as
+      `setup.sh` did, and compares it with the brain's template files. If
+      you edited one, it stops and names it; undo the edit (or move it out
+      of the template file), commit, and re-run. A brain you updated by
+      hand before has no recorded base, so its first commit names an older
+      one and the files you updated are listed as edited: do not undo
+      them; record the template commit you updated to
+      (`git config binnacle.templateBase <commit>`) and re-run. Otherwise
+      it copies what changed upstream since then (new, changed, deleted
+      and renamed files), re-applies the company scope rules to `CLAUDE.md`
+      and the run prompt, and commits on a `binnacle-update/<id>` branch
+      through the pre-commit scan. `wiki/`, `raw/`, `soundings/` and
+      `audit/` are never touched: an upstream change there is listed for
+      you to copy by hand.
+- [ ] **[work machine, human]** Local only, `main` is fast-forwarded and
+      the new base recorded: done. Connected, it pushes the branch and
+      opens a PR **without auto-merge**: review it and merge it yourself,
+      then pull `main`. The next `update.sh` run sees the merged PR and
+      records the new base (a closed, unmerged PR leaves the base as it
+      was). It refuses while that PR, or any other update PR, is open.
+- [ ] **[work machine, human]** It refuses `~/binnacle`, which is updated
+      by its own setup, and any folder that is not a work brain.

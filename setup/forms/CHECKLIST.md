@@ -207,7 +207,9 @@ off.
 
 ## Personal vault (Google Forms)
 
-The personal vault takes no company system. For your own Google Forms,
+The personal vault takes no company system. To pull your own Google
+Forms' responses automatically, through the Google Forms API with
+read-only access, follow `setup/forms/GOOGLE-CHECKLIST.md`. Otherwise,
 download the responses (Forms > Responses > Download responses, a .zip
 holding the .csv, or the linked sheet > File > Download > CSV) and run the
 converter by hand on the Mac where you capture:
