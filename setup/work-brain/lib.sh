@@ -71,7 +71,7 @@ wb_check_origin() {
   origin=$(git -C "$1" remote get-url origin 2>/dev/null || true)
   [ -n "$origin" ] || return 0
   recorded=$(git -C "$1" config --local --get binnacle.remoteUrl || true)
-  [ -n "$recorded" ] && wb_same_remote "$origin" "$recorded" \
+  wb_same_remote "$origin" "$recorded" \
     || bn_die "refusing: $1 has origin '$origin', which is not the remote this brain was connected to (${recorded:-none}). It points elsewhere; fix or remove that remote by hand first."
 }
 
