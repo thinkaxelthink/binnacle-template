@@ -44,14 +44,17 @@
 #       --within-window, which scrubs them and writes the window's one
 #       note, raw/inbox/forms/form-<hash>-<from>-to-<to>.md, or refuses
 #       and writes nothing;
-#     - run again while that note is still in raw/inbox/forms/: when the
-#       window's responses, the form or the settings changed, the whole
-#       note is rebuilt; otherwise it is left as it is;
+#     - run again while that note is still in raw/inbox/forms/ and not
+#       yet committed: when the window's responses, the form or the
+#       settings changed, the whole note is rebuilt; otherwise it is left
+#       as it is. Once git tracks the note (committed, waiting for ingest),
+#       it and the form's state are left as they are and nothing is
+#       fetched (exit 0);
 #     - once the note has left raw/inbox/forms/ (ingested), the window is
 #       done: set from= and to= for the next one.
-#   While the note waits, from/to may change only to a window that
-#   contains the old one (the note is rebuilt under the wider window and
-#   the old-named note removed). A window that overlaps one whose note has
+#   While the note waits uncommitted, from/to may change only to a window
+#   that contains the old one (the note is rebuilt under the wider window
+#   and the old-named note removed). A window that overlaps one whose note has
 #   left the inbox is refused. State per form: <vault>/.binnacle/
 #   forms-google-state/<FORM>/ (.windows, .note). Nothing is committed.
 #

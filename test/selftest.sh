@@ -1255,6 +1255,23 @@ check "gpull: names the scope refusal" grep -q 'not exactly' "$T/gpull.out"
 check "gpull: nothing changed by the scope refusal" test "$(gstate)" = "$before"
 check "gpull: back to the full window" gpull
 check "gpull: four respondents again" grep -qx 'respondents: 4' "$GN"
+git -C "$GV" add -- "raw/inbox/forms/$(basename "$GN")"
+git -C "$GV" -c user.name=selftest -c user.email=selftest@example.invalid -c commit.gpgsign=false \
+  commit -q --no-verify -m 'waiting note'
+printf '%s\n' "$w_base" | grep -v '^asmith' | gresp
+before=$(gstate)
+: >"$G/http.log"
+check "gpull: a committed waiting note with a changed response exits 0" gpull
+check "gpull: says the note is committed and waiting for ingest" grep -q "$(basename "$GN") is already committed and waiting for ingest" "$T/gpull.out"
+check "gpull: a committed waiting note makes no HTTP call" no_http
+check "gpull: a committed waiting note and its state are left unchanged" test "$(gstate)" = "$before"
+printf '%s\nlate-1|2025-10-16T15:00:00Z|A late thought|4|Talks|Agree\n' "$w_base" | gresp
+gwin 2025-10-01 2025-10-16
+check "gpull: widening while a committed note waits exits 0" gpull
+check "gpull: says the committed note is waiting for ingest" grep -q "$(basename "$GN") is already committed and waiting for ingest" "$T/gpull.out"
+check "gpull: widening leaves a committed note and its state unchanged" test "$(gstate)" = "$before"
+gwin 2025-10-01 2025-10-14
+git -C "$GV" reset -q "$gv_head"
 printf '%s\nlate-1|2025-10-16T15:00:00Z|A late thought|4|Talks|Agree\n' "$w_base" | gresp
 gwin 2025-10-01 2025-10-16
 w1w=2025-10-01-to-2025-10-16

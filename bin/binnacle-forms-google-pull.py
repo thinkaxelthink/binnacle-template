@@ -69,6 +69,13 @@ def git_config(vault, key):
     return p.stdout.strip() if p.returncode == 0 else ""
 
 
+def tracked(vault, note):
+    """NOTE in raw/inbox/forms/ is known to the vault's git (committed or staged)."""
+    return subprocess.run(["git", "-C", vault, "ls-files", "--error-unmatch", "--",
+                           "raw/inbox/forms/" + note], stdout=subprocess.DEVNULL,
+                          stderr=subprocess.DEVNULL).returncode == 0
+
+
 def physical(path):
     return os.path.realpath(os.path.abspath(os.path.expanduser(path)))
 
@@ -485,6 +492,10 @@ class Form:
             if wf is not None and not (d_from > wt or d_to < wf):
                 raise Stop("window %s overlaps window %s, whose note has already left raw/inbox/forms/; set from= "
                            "and to= for a later window; nothing pulled" % (window, w))
+        if waiting and tracked(ctx.vault, self.last_note):
+            ok("raw/inbox/forms/%s is already committed and waiting for ingest; left as it is, nothing pulled"
+               % self.last_note)
+            return True
 
         today = (datetime.datetime.now(tz) if tz is not None else datetime.datetime.now()).date()
         if today <= d_to:

@@ -151,12 +151,15 @@ All in the browser, signed in to the Google account that owns the forms.
       commits and pushes it on its next sync, and the following night's
       run ingests it. If it should not be ingested, delete it from
       `raw/inbox/forms/` (and from `main`, if it was pushed) before then.
-- [ ] **[shoyu, human]** While the note waits in `raw/inbox/forms/`, a
-      pull rebuilds it whole when a response, the form or the settings
-      changed, and leaves it alone otherwise. `from=`/`to=` may only widen
-      to contain the old window then (the note is rebuilt under the wider
-      window and the old-named one removed). Once it has been ingested,
-      that window is done.
+- [ ] **[shoyu, human]** While the note waits in `raw/inbox/forms/` and
+      is not yet committed, a pull rebuilds it whole when a response, the
+      form or the settings changed, and leaves it alone otherwise.
+      `from=`/`to=` may only widen to contain the old window then (the
+      note is rebuilt under the wider window and the old-named one
+      removed). Once Obsidian Git has committed it, a pull leaves it and
+      the window as they are and says it is committed and waiting for
+      ingest; later changes in Forms do not reach it. Once it has been
+      ingested, that window is done.
 - [ ] **[shoyu, human]** Set `from=` and `to=` for the next window (it
       must not overlap an ingested one), then reopen the form in the
       browser.
