@@ -94,7 +94,13 @@ cat >"$T/stubs/gh" <<'EOF'
 echo "gh $*" >>"$STUB_LOG"
 [ -z "${STUB_TOKEN_LOG:-}" ] || echo "token=${GH_TOKEN:-}" >>"$STUB_TOKEN_LOG"
 case "$1 $2" in
-  "pr list") [ -n "${STUB_GH_OPEN:-}" ] && echo "https://github.com/example/binnacle/pull/9"; exit 0 ;;
+  "pr list")
+    if [ -n "${STUB_GH_OPEN_HEAD:-}" ]; then
+      prev=
+      for a in "$@"; do [ "$prev" = --jq ] && q=$a; prev=$a; done
+      printf '[{"headRefName":"%s","url":"https://github.com/example/binnacle/pull/9"}]\n' "$STUB_GH_OPEN_HEAD" | jq -r "$q"; exit
+    fi
+    [ -n "${STUB_GH_OPEN:-}" ] && echo "https://github.com/example/binnacle/pull/9"; exit 0 ;;
   "pr create")
     prev=
     for a in "$@"; do [ "$prev" = --body-file ] && cp "$a" "$STUB_BODY"; prev=$a; done
@@ -1273,6 +1279,7 @@ if [ "$template_rules" = yes ]; then
     env HOME="$WH" "$TPL/setup/work-brain/setup.sh" --org acme --user "$1" --dir "$2" >"$T/wb.out" 2>&1
   }
   upd() { env HOME="$WH" "$TPL/setup/work-brain/update.sh" "$@" >"$T/upd.out" 2>&1; }
+  upd_open_pr() { env STUB_GH_OPEN_HEAD="$1" HOME="$WH" "$TPL/setup/work-brain/update.sh" "$2" >"$T/upd.out" 2>&1; }
   U=$WH/u-local
   UR=$WH/u-remote
   check "update fixture: local brain" upd_setup upd "$U"
@@ -1380,8 +1387,13 @@ if [ "$template_rules" = yes ]; then
   git -C "$UR" config --unset binnacle.localOnly
   git -C "$UR" config --unset binnacle.templateBase
   : >"$T/gh.log"
-  check "update connected: refuses while an update PR is open" expect_fail env STUB_GH_OPEN=1 HOME="$WH" \
-    "$TPL/setup/work-brain/update.sh" "$UR"
+  if command -v jq >/dev/null 2>&1; then
+    check "update connected: refuses while an update PR is open" expect_fail \
+      upd_open_pr binnacle-update/20260101T000000Z "$UR"
+    check "update connected: says an update PR is open" grep -q 'an update PR is still open' "$T/upd.out"
+  else
+    printf 'skip   update connected: open PR filter (jq not installed)\n'
+  fi
   printf 'unpushed\n' >"$UR/soundings/unpushed.md"
   git -C "$UR" add -A
   git -C "$UR" commit -qm unpushed
@@ -1389,7 +1401,11 @@ if [ "$template_rules" = yes ]; then
   check "update connected: says main differs from origin" grep -q 'differs from origin' "$T/upd.out"
   git -C "$UR" reset -q --hard origin/main 2>/dev/null || git -C "$UR" reset -q --hard HEAD~1
   ur_main=$(git -C "$UR" rev-parse main)
-  check "update connected: exits 0" upd "$UR"
+  if command -v jq >/dev/null 2>&1; then
+    check "update connected: exits 0 while a run PR is open" upd_open_pr binnacle-run/20260101T000000Z "$UR"
+  else
+    check "update connected: exits 0" upd "$UR"
+  fi
   check "update connected: base from the first commit message" grep -q 'from the first commit message' "$T/upd.out"
   update_ref() { git -C "$BRU" for-each-ref --format='%(refname:short)' 'refs/heads/binnacle-update/*'; }
   check "update connected: branch pushed" test -n "$(update_ref)"
