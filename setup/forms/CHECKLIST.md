@@ -15,6 +15,9 @@ folder `team-pulse`; use your own.
 
 ## The vault rule change
 
+The scrub exists to keep personal contact details out of the vault and
+away from the agent that reads it.
+
 A work brain's rule is that no company system connects to it. This adds
 exactly one exception: **your own Microsoft Forms flow may feed
 `raw/inbox/forms/`, and only through the converter's scrub, which runs
