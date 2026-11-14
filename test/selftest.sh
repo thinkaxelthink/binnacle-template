@@ -1270,6 +1270,11 @@ gwin 2025-10-01 2025-10-16
 check "gpull: widening while a committed note waits exits 0" gpull
 check "gpull: says the committed note is waiting for ingest" grep -q "$(basename "$GN") is already committed and waiting for ingest" "$T/gpull.out"
 check "gpull: widening leaves a committed note and its state unchanged" test "$(gstate)" = "$before"
+gwin 2025-10-17 2025-10-31
+check "gpull: the next window while a committed note waits exits 0" gpull
+check "gpull: says the committed note waits before the next window" grep -q "$(basename "$GN") is already committed and waiting for ingest" "$T/gpull.out"
+check "gpull: the next window leaves a committed note and its state unchanged" test "$(gstate)" = "$before"
+check "gpull: the next window while a committed note waits makes no HTTP call" no_http
 gwin 2025-10-01 2025-10-14
 git -C "$GV" reset -q "$gv_head"
 printf '%s\nlate-1|2025-10-16T15:00:00Z|A late thought|4|Talks|Agree\n' "$w_base" | gresp

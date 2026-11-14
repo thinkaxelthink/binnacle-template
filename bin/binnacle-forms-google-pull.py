@@ -472,6 +472,10 @@ class Form:
 
         self.read_state()
         waiting = bool(self.last_note) and os.path.isfile(os.path.join(ctx.inbox, self.last_note))
+        if waiting and tracked(ctx.vault, self.last_note):
+            ok("raw/inbox/forms/%s is already committed and waiting for ingest; left as it is, nothing pulled"
+               % self.last_note)
+            return True
         widen = ""
         if waiting and self.last_window != window:
             lf, lt = window_dates(self.last_window)
@@ -492,10 +496,6 @@ class Form:
             if wf is not None and not (d_from > wt or d_to < wf):
                 raise Stop("window %s overlaps window %s, whose note has already left raw/inbox/forms/; set from= "
                            "and to= for a later window; nothing pulled" % (window, w))
-        if waiting and tracked(ctx.vault, self.last_note):
-            ok("raw/inbox/forms/%s is already committed and waiting for ingest; left as it is, nothing pulled"
-               % self.last_note)
-            return True
 
         today = (datetime.datetime.now(tz) if tz is not None else datetime.datetime.now()).date()
         if today <= d_to:

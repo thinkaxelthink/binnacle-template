@@ -162,7 +162,8 @@ All in the browser, signed in to the Google account that owns the forms.
       ingested, that window is done.
 - [ ] **[shoyu, human]** Set `from=` and `to=` for the next window (it
       must not overlap an ingested one), then reopen the form in the
-      browser.
+      browser. Pulls pick up the next window once the previous note has
+      been ingested; until then they say it is waiting for ingest.
 - [ ] **[browser, human]** Delete the window's responses in Google Forms
       when your retention review allows (the note's `retention_review`
       date is your reminder).
