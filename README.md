@@ -131,6 +131,15 @@ and the organization's owners (who can always read it). The setup refuses
 colliding folders and remotes and never touches `~/binnacle`; the personal
 vault and its setup are unchanged. Steps: `setup/work-brain/CHECKLIST.md`.
 
+To pick up later template changes, run `setup/work-brain/update.sh
+<vault>` from an up-to-date template checkout. It finds the template
+commit the brain was built from (`git config binnacle.templateBase`, else
+its first commit message), stops and names any template file edited in the
+brain, then copies what changed upstream onto a `binnacle-update/<id>`
+branch with the company scope rules re-applied, never touching `wiki/`,
+`raw/`, `soundings/` or `audit/`. Local only it fast-forwards `main`;
+connected it opens a PR that you merge yourself. It refuses `~/binnacle`.
+
 ## Survey intake
 
 `bin/binnacle-forms-to-inbox` turns a survey's responses export
@@ -160,7 +169,8 @@ creation, the import marker, out-of-zone refusal, size-cap stop, no
 auto-merge), plus `bin/binnacle-nightly` and `setup/shoyu/nightly.sh`
 (stubbed `binnacle-run` and `launchctl`), and the work-brain profile
 (name slugging, collision refusals, local-only setup and runs, connecting
-a remote, the base-permission and app-installation checks with a stubbed
+a remote, updating from a newer template (local and connected), the
+base-permission and app-installation checks with a stubbed
 `gh`), the survey converter and mover (csv and xlsx exports of both
 platforms, the scrub, refusals, ratings, the R1..Rn shuffle, re-runs) and
 the people-zone guard, against throwaway repositories built from the

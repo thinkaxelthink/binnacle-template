@@ -26,7 +26,7 @@ check() { # description, command...
 scripts=(.githooks/pre-commit bin/binnacle-run bin/binnacle-import bin/binnacle-nightly setup/common/lib.sh
   setup/common/install-hooks.sh setup/github/setup.sh setup/shoyu/setup.sh setup/shoyu/nightly.sh
   setup/workmac/setup.sh setup/work-brain/lib.sh setup/work-brain/setup.sh setup/work-brain/connect-remote.sh
-  bin/binnacle-forms-to-inbox setup/forms/mover.sh test/selftest.sh)
+  setup/work-brain/update.sh bin/binnacle-forms-to-inbox setup/forms/mover.sh test/selftest.sh)
 
 # --- static checks -------------------------------------------------------------
 for s in "${scripts[@]}"; do
@@ -100,6 +100,7 @@ case "$1 $2" in
     for a in "$@"; do [ "$prev" = --body-file ] && cp "$a" "$STUB_BODY"; prev=$a; done
     echo "https://github.com/example/binnacle/pull/1"; exit 0 ;;
   "pr merge") exit 0 ;;
+  "pr view") [ -n "${STUB_GH_PR_STATE:-}" ] || exit 1; echo "$STUB_GH_PR_STATE"; exit 0 ;;
   "auth git-credential")
     cat >/dev/null
     [ "$3" = get ] && printf 'username=x-access-token\npassword=stub-token\n'
@@ -1042,6 +1043,8 @@ if [ "$template_rules" = yes ]; then
   check "work-brain setup: runs the AI writer (wiki-writer)" test "$(git -C "$B" config binnacle.role)" = wiki-writer
   check "work-brain setup: token item named after the brain" \
     test "$(git -C "$B" config binnacle.ghTokenItem)" = binnacle-acme-engineering-jdoe-gh-token
+  check "work-brain setup: records the template base" \
+    test "$(git -C "$B" config binnacle.templateBase)" = "$(git -C "$T/seed" rev-parse HEAD)"
   check "work-brain setup: hook installed" test "$(git -C "$B" config --local core.hooksPath)" = .githooks
   check "work-brain setup: vault-only work email" test "$(git -C "$B" config --local user.email)" = jdoe@acme.example
   check "work-brain setup: user.name defaults to the GitHub user" test "$(git -C "$B" config --local user.name)" = jdoe
@@ -1260,6 +1263,159 @@ if [ "$template_rules" = yes ]; then
     connect --url https://github.com/Other-Org/binnacle-acme-engineering-jdoe.git
   check "connect: says origin points elsewhere for another owner" grep -q 'points elsewhere' "$T/connect.out"
   git config --global --remove-section url."$BR"
+
+  # Updating a work brain: a synthetic template history (the seed, then one
+  # upstream commit) and brains built from the older commit.
+  TPL=$T/tpl
+  git clone -q "$T/seed" "$TPL"
+  tpl_base=$(git -C "$TPL" rev-parse HEAD)
+  upd_setup() { # user, dir -> a brain built from $TPL's HEAD
+    env HOME="$WH" "$TPL/setup/work-brain/setup.sh" --org acme --user "$1" --dir "$2" >"$T/wb.out" 2>&1
+  }
+  upd() { env HOME="$WH" "$TPL/setup/work-brain/update.sh" "$@" >"$T/upd.out" 2>&1; }
+  U=$WH/u-local
+  UR=$WH/u-remote
+  check "update fixture: local brain" upd_setup upd "$U"
+  check "update fixture: connected brain" upd_setup upd2 "$UR"
+  for d in "$U" "$UR"; do
+    mkdir -p "$d/wiki/concepts" "$d/raw/sources/r1" "$d/.obsidian"
+    printf 'my note\n' >"$d/soundings/mine.md"
+    printf -- '---\ntype: concept\n---\n# Mine\n' >"$d/wiki/concepts/mine.md"
+    printf 'a source\n' >"$d/raw/sources/r1/src.md"
+    printf '{"vault": "own"}\n' >"$d/.obsidian/app.json"
+    git -C "$d" add -A
+    git -C "$d" commit -qm content
+  done
+  printf '\nUpstream README line.\n' >>"$TPL/README.md"
+  printf '\nUpstream schema line.\n' >>"$TPL/CLAUDE.md"
+  mkdir -p "$TPL/docs"
+  printf 'new upstream doc\n' >"$TPL/docs/new.md"
+  git -C "$TPL" rm -q setup/iphone/CHECKLIST.md
+  git -C "$TPL" mv setup/forms/CHECKLIST.md setup/forms/GUIDE.md
+  printf 'upstream view\n' >>"$TPL/audit/runs.base"
+  git -C "$TPL" add -A
+  git -C "$TPL" commit -qm upstream
+  tpl_head=$(git -C "$TPL" rev-parse HEAD)
+  no_update_branch() { test -z "$(git -C "$1" branch --list 'binnacle-update/*')"; }
+
+  check "update: refuses the personal ~/binnacle" expect_fail upd "$WH/binnacle"
+  check "update: personal refusal says so" grep -q 'personal vault' "$T/upd.out"
+  check "update: refuses a repository that is not a work brain" expect_fail upd "$WH/other-repo"
+  check "update: says it is not a work brain" grep -q 'not a work-brain vault' "$T/upd.out"
+  check "update: refuses to run from the vault's own copy" expect_fail \
+    bash -c 'env HOME="$1" "$2/setup/work-brain/update.sh" "$2" >"$3" 2>&1' _ "$WH" "$U" "$T/upd.out"
+  check "update: says to run from a template checkout" grep -q 'not from the vault' "$T/upd.out"
+  printf 'wip\n' >"$U/soundings/wip.md"
+  check "update: refuses a vault with uncommitted changes" expect_fail upd "$U"
+  check "update: says uncommitted changes" grep -q 'uncommitted changes' "$T/upd.out"
+  rm "$U/soundings/wip.md"
+  git -C "$U" branch binnacle-run/20260101T000000Z
+  check "update: refuses while a run branch waits" expect_fail upd "$U"
+  check "update: names the waiting branch" grep -q 'still waiting: binnacle-run/20260101T000000Z' "$T/upd.out"
+  git -C "$U" branch -q -D binnacle-run/20260101T000000Z
+  git -C "$U" config binnacle.templateBase deadbeef
+  check "update: refuses an unknown base" expect_fail upd "$U"
+  check "update: unknown base says so" grep -q 'unknown base' "$T/upd.out"
+  git -C "$U" config binnacle.templateBase "$tpl_base"
+  main_before=$(git -C "$U" rev-parse main)
+  printf 'my tweak\n' >>"$U/README.md"
+  printf '# my hook tweak\n' >>"$U/.githooks/pre-commit"
+  git -C "$U" commit -qam tweak
+  check "update: refuses a locally edited template file" expect_fail upd "$U"
+  check "update: names each edited file" bash -c 'grep -qx "  README.md" "$1" && grep -qx "  .githooks/pre-commit" "$1"' _ "$T/upd.out"
+  check "update: does not name unedited files" bash -c '! grep -q "CLAUDE.md" "$1"' _ "$T/upd.out"
+  check "update: edit refusal changes nothing" test "$(git -C "$U" rev-list --count "$main_before..main")" = 1
+  check "update: edit refusal leaves no branch" no_update_branch "$U"
+  git -C "$U" reset -q --hard "$main_before"
+  check "update: hook failure stops the update" expect_fail env BINNACLE_GITLEAKS="$T/stubs/gitleaks-fail" \
+    HOME="$WH" "$TPL/setup/work-brain/update.sh" "$U"
+  check "update: hook failure leaves main alone" test "$(git -C "$U" rev-parse main)" = "$main_before"
+  check "update: hook failure leaves no branch or worktree" bash -c \
+    'test -z "$(git -C "$1" branch --list "binnacle-update/*")" && test "$(git -C "$1" worktree list | wc -l | tr -d " ")" = 1' _ "$U"
+
+  # Local only: main is fast-forwarded and the new base recorded.
+  check "update local: exits 0" upd "$U"
+  check "update local: one commit on main" test "$(git -C "$U" rev-list --count "$main_before..main")" = 1
+  check "update local: changed file copied" grep -q 'Upstream README line.' "$U/README.md"
+  check "update local: CLAUDE.md updated" grep -q 'Upstream schema line.' "$U/CLAUDE.md"
+  check "update local: company scope rules re-applied" bash -c \
+    'grep -q "Scope is work" "$1" && ! grep -q "Scope is personal" "$1" && ! grep -q shoyu "$1"' _ "$U/CLAUDE.md"
+  check "update local: added file copied" test -f "$U/docs/new.md"
+  check "update local: deleted file removed" test ! -e "$U/setup/iphone/CHECKLIST.md"
+  check "update local: renamed file moved" bash -c 'test -f "$1/setup/forms/GUIDE.md" && test ! -e "$1/setup/forms/CHECKLIST.md"' _ "$U"
+  check "update local: content zones and vault files untouched" \
+    git -C "$U" diff --quiet "$main_before" main -- wiki raw soundings audit .obsidian
+  check "update local: lists the content-zone change it skipped" grep -q 'not applied.*audit/runs.base' "$T/upd.out"
+  check "update local: base recorded" test "$(git -C "$U" config binnacle.templateBase)" = "$tpl_head"
+  check "update local: no branch or worktree left" bash -c \
+    'test -z "$(git -C "$1" branch --list "binnacle-update/*")" && test "$(git -C "$1" worktree list | wc -l | tr -d " ")" = 1' _ "$U"
+  check "update local: clean tree" test -z "$(git -C "$U" status --porcelain)"
+  check "update local: no GitHub call" bash -c '! grep -q "pr " "$1"' _ "$T/gh.log"
+  check "update fixture: fresh brain from the new template" upd_setup fresh "$WH/u-fresh"
+  template_files() { git -C "$1" ls-tree -r main | grep -Ev $'\t(wiki|raw|soundings|audit|\\.obsidian)/'; }
+  check "update local: template files match a brain set up from the new template" bash -c \
+    'test -n "$1" && test "$1" = "$2"' _ "$(template_files "$U")" "$(template_files "$WH/u-fresh")"
+  check "update local: re-run exits 0" upd "$U"
+  check "update local: re-run is already up to date" grep -q 'already up to date' "$T/upd.out"
+  check "update local: re-run adds no commit" test "$(git -C "$U" rev-list --count "$main_before..main")" = 1
+
+  # A file the template adds over one the vault already has is refused.
+  mkdir -p "$TPL/.obsidian"
+  printf '{"template": true}\n' >"$TPL/.obsidian/app.json"
+  git -C "$TPL" add -A
+  git -C "$TPL" commit -qm 'upstream obsidian'
+  check "update: refuses an upstream file the vault already has" expect_fail upd "$U"
+  check "update: names that file" grep -q '.obsidian/app.json (exists in the vault' "$T/upd.out"
+  git -C "$TPL" reset -q --hard "$tpl_head"
+
+  # Connected: the branch is pushed and a PR opened, never auto-merged. The
+  # base is read from the first commit message (no binnacle.templateBase).
+  BRU=$T/gh-acme/binnacle-acme-upd2.git
+  git init -q --bare "$BRU"
+  git -C "$UR" remote add origin "$BRU"
+  git -C "$UR" config binnacle.remoteUrl "$BRU"
+  git -C "$UR" push -q origin main
+  git -C "$UR" config --unset binnacle.localOnly
+  git -C "$UR" config --unset binnacle.templateBase
+  : >"$T/gh.log"
+  check "update connected: refuses while a run PR is open" expect_fail env STUB_GH_OPEN=1 HOME="$WH" \
+    "$TPL/setup/work-brain/update.sh" "$UR"
+  printf 'unpushed\n' >"$UR/soundings/unpushed.md"
+  git -C "$UR" add -A
+  git -C "$UR" commit -qm unpushed
+  check "update connected: refuses when main differs from origin" expect_fail upd "$UR"
+  check "update connected: says main differs from origin" grep -q 'differs from origin' "$T/upd.out"
+  git -C "$UR" reset -q --hard origin/main 2>/dev/null || git -C "$UR" reset -q --hard HEAD~1
+  ur_main=$(git -C "$UR" rev-parse main)
+  check "update connected: exits 0" upd "$UR"
+  check "update connected: base from the first commit message" grep -q 'from the first commit message' "$T/upd.out"
+  update_ref() { git -C "$BRU" for-each-ref --format='%(refname:short)' 'refs/heads/binnacle-update/*'; }
+  check "update connected: branch pushed" test -n "$(update_ref)"
+  check "update connected: branch holds the update" bash -c \
+    'git -C "$1" show "$2:README.md" | grep -q "Upstream README line." && ! git -C "$1" cat-file -e "$2:setup/iphone/CHECKLIST.md" 2>/dev/null' _ "$BRU" "$(update_ref)"
+  check "update connected: branch leaves content zones alone" \
+    git -C "$BRU" diff --quiet main "$(update_ref)" -- wiki raw soundings audit .obsidian
+  check "update connected: origin main unchanged" test "$(git -C "$BRU" rev-parse main)" = "$ur_main"
+  check "update connected: local main unchanged" test "$(git -C "$UR" rev-parse main)" = "$ur_main"
+  check "update connected: PR opened against main" grep -q "pr create --base main --head $(update_ref)" "$T/gh.log"
+  check "update connected: PR URL printed" grep -q 'PR: https://github.com/example/binnacle/pull/1' "$T/upd.out"
+  check "update connected: no auto-merge" bash -c '! grep -q "pr merge" "$1"' _ "$T/gh.log"
+  check "update connected: PR body lists the files" grep -q 'docs/new.md' "$T/pr-body.md"
+  check "update connected: PR body says not auto-merged" grep -q 'Not auto-merged' "$T/pr-body.md"
+  check "update connected: new base pending until merged" bash -c \
+    'test "$(git -C "$1" config binnacle.templateBasePending)" = "$2" && ! git -C "$1" config binnacle.templateBase' _ "$UR" "$tpl_head"
+  check "update connected: no local branch or worktree left" bash -c \
+    'test -z "$(git -C "$1" branch --list "binnacle-update/*")" && test "$(git -C "$1" worktree list | wc -l | tr -d " ")" = 1' _ "$UR"
+  check "update connected: refuses while the update PR is open" expect_fail env STUB_GH_PR_STATE=OPEN HOME="$WH" \
+    bash -c '"$1/setup/work-brain/update.sh" "$2" >"$3" 2>&1' _ "$TPL" "$UR" "$T/upd.out"
+  check "update connected: says the update PR is still open" grep -q 'update PR (binnacle-update/.*) is still open' "$T/upd.out"
+  git -C "$BRU" update-ref refs/heads/main "refs/heads/$(update_ref)"
+  git -C "$UR" pull -q --ff-only origin main
+  check "update connected: after the merge, exits 0" env STUB_GH_PR_STATE=MERGED HOME="$WH" \
+    bash -c '"$1/setup/work-brain/update.sh" "$2" >"$3" 2>&1' _ "$TPL" "$UR" "$T/upd.out"
+  check "update connected: after the merge, already up to date" grep -q 'already up to date' "$T/upd.out"
+  check "update connected: after the merge, base recorded" bash -c \
+    'test "$(git -C "$1" config binnacle.templateBase)" = "$2" && ! git -C "$1" config binnacle.templateBasePending' _ "$UR" "$tpl_head"
 
   # A work brain with real content runs its own selftest: the sandbox takes
   # only template files, and what needs a pristine template is skipped.

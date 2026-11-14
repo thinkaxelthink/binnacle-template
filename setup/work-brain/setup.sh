@@ -104,6 +104,8 @@ if ! git -C "$dir" rev-parse --verify -q 'HEAD^{commit}' >/dev/null; then
   git -C "$src" archive --format=tar HEAD | tar -xf - -C "$dir"
   wb_apply_rules "$dir"
   template_rev=$(git -C "$src" rev-parse --short HEAD)
+  # update.sh starts from this commit.
+  git -C "$dir" config binnacle.templateBase "$(git -C "$src" rev-parse HEAD)"
   bn_ok "template files copied ($template_rev), company content limits written to CLAUDE.md"
 else
   bn_ok "existing vault"
