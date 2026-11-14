@@ -195,7 +195,7 @@ repositories (GitHub Team or Enterprise).
       ```sh
       git config --local --get-all credential.https://github.com.helper
       # (empty line)
-      # !/opt/homebrew/bin/gh auth git-credential
+      # !'/opt/homebrew/bin/gh' auth git-credential
       ```
 
       Obsidian on macOS starts with a minimal `PATH` (`/usr/bin:/bin`),

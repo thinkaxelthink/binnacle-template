@@ -770,7 +770,7 @@ else
 fi
 helper_key=credential.https://github.com.helper
 check "connect: credential helper empty entry then gh by absolute path" \
-  test "$(git -C "$B" config --local --get-all "$helper_key")" = "$(printf '\n!%s auth git-credential' "$BINNACLE_GH")"
+  test "$(git -C "$B" config --local --get-all "$helper_key")" = "$(printf "\n!'%s' auth git-credential" "$BINNACLE_GH")"
 check "connect: no credential helper in global config" expect_fail git config --global --get-regexp '^credential\.'
 check "connect: re-run is safe" connect --url "$BR"
 check "connect: re-run adds no duplicate helper entries" \
@@ -778,6 +778,17 @@ check "connect: re-run adds no duplicate helper entries" \
 # Obsidian on macOS runs git with a minimal PATH: the helper must still find gh.
 gitbin=$(command -v git)
 check "connect: credential helper runs under PATH=/usr/bin:/bin" bash -c \
+  'printf "protocol=https\nhost=github.com\n\n" | env PATH=/usr/bin:/bin GIT_TERMINAL_PROMPT=0 "$1" -C "$2" credential fill | grep -q "^password=stub-token$"' \
+  _ "$gitbin" "$B"
+# The default BINNACLE_GH is the bare name gh: the helper must hold where
+# PATH found it, quoted, even in a directory with a space.
+mkdir -p "$T/gh bin"
+cp "$T/stubs/gh" "$T/gh bin/gh"
+check "connect: bare gh resolved from PATH" \
+  env PATH="$T/gh bin:$PATH" BINNACLE_GH=gh "$B/setup/work-brain/connect-remote.sh" --url "$BR"
+check "connect: helper names the resolved gh by quoted absolute path" \
+  test "$(git -C "$B" config --local --get-all "$helper_key" | sed -n 2p)" = "!'$T/gh bin/gh' auth git-credential"
+check "connect: resolved gh helper runs under PATH=/usr/bin:/bin" bash -c \
   'printf "protocol=https\nhost=github.com\n\n" | env PATH=/usr/bin:/bin GIT_TERMINAL_PROMPT=0 "$1" -C "$2" credential fill | grep -q "^password=stub-token$"' \
   _ "$gitbin" "$B"
 check "connect: refuses when gh is not found" expect_fail env BINNACLE_GH="$T/no-such-gh" \

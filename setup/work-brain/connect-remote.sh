@@ -74,9 +74,6 @@ case $gh_path in
   /*) ;;
   *) bn_die "gh not found ('$GH'); install it (brew install gh) and log in (CHECKLIST.md), then re-run" ;;
 esac
-case $gh_path in
-  *[[:space:]]*) bn_die "gh is at '$gh_path', a path with a space, which a git credential helper cannot run; install gh elsewhere" ;;
-esac
 
 # GitHub visibility, when gh can see the repository.
 owner_repo=""
@@ -125,7 +122,8 @@ git -C "$vault" config binnacle.remoteUrl "$url"
 helper_key=credential.https://github.com.helper
 git -C "$vault" config --local --unset-all "$helper_key" || true
 git -C "$vault" config --local --add "$helper_key" ""
-git -C "$vault" config --local --add "$helper_key" "!$gh_path auth git-credential"
+gh_quoted=$(printf '%s' "$gh_path" | sed "s/'/'\\\\''/g")
+git -C "$vault" config --local --add "$helper_key" "!'$gh_quoted' auth git-credential"
 bn_ok "credential helper for https://github.com (this vault only): $gh_path auth git-credential"
 git -C "$vault" push -q -u origin main || bn_die "git push failed; fix access and re-run (nothing else changed)"
 bn_ok "main pushed"
