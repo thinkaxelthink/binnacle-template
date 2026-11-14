@@ -210,12 +210,13 @@ LOCAL_DATE = re.compile(r"^(\d{1,2})[/.](\d{1,2})[/.](\d{2,4})(?:$|[ ,])")
 SERIAL = re.compile(r"^\d{5}(?:\.\d+)?$")
 
 
-def parse_dates(values, order=None):
+def parse_dates(values, order, advice):
     """Dates of the given timestamp strings, in order, or None when one
     cannot be read.
 
     Day and month order for d/m/y forms: ORDER (dmy or mdy) when given, else
-    told from a number over 12; refused when the data cannot tell."""
+    told from a number over 12; refused, with ADVICE, when the data cannot
+    tell."""
     out, local = [], []
     for v in values:
         v = v.strip()
@@ -241,8 +242,7 @@ def parse_dates(values, order=None):
         if order:
             day_first = order == "dmy"
         elif not day_first and not month_first:
-            raise Stop("cannot tell day from month in the response dates; pass --date-order dmy or mdy, "
-                       "or --from and --to (YYYY-MM-DD)", 2)
+            raise Stop("cannot tell day from month in the response dates; %s" % advice, 2)
         for k, a, b, y in local:
             out[k] = (y, b, a) if day_first else (y, a, b)
     try:
@@ -513,9 +513,13 @@ def main(argv):
     if d_from is None or d_to is None or a.within_window:
         tcol = next((low.index(c) for c in TIME_COLUMNS if c in low), None)
         stamped = [] if tcol is None else [(name, n, cells[tcol]) for name, n, cells in rows if cells[tcol].strip()]
-        dates = parse_dates([v for _, _, v in stamped], a.date_order) if stamped else None
+        advice = ("pass --date-order dmy or mdy (date_order= in the mover's form settings)" if a.within_window
+                  else "pass --date-order dmy or mdy, or --from and --to (YYYY-MM-DD)")
+        dates = parse_dates([v for _, _, v in stamped], a.date_order, advice) if stamped else None
         if not dates:
-            raise Stop("cannot read the response timestamps; pass --from and --to (YYYY-MM-DD)", 2)
+            raise Stop("cannot read the response timestamps"
+                       + (", so the window cannot be checked" if a.within_window
+                          else "; pass --from and --to (YYYY-MM-DD)"), 2)
         if a.within_window:
             inside = {(name, n) for (name, n, _), d in zip(stamped, dates) if d_from <= d <= d_to}
             outside = ["%s, row %d" % (name, n) for name, n, _ in rows if (name, n) not in inside]

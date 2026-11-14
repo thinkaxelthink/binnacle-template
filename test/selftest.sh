@@ -834,7 +834,9 @@ git -C "$FV" config binnacle.formsSyncDir "$SY"
 mover() { "$repo/setup/forms/mover.sh" --vault "$FV" "$@" >"$T/mover.out" 2>&1; }
 pulse=form-$(sha pulse-1 | cut -c1-12)
 w1=2026-11-11-to-2026-11-14
+w1w=2026-11-11-to-2026-11-15
 w2=2026-12-01-to-2026-12-31
+setwin() { sed -i.bak "s/^from=.*/from=$1/; s/^to=.*/to=$2/" "$FV/.binnacle/forms/team-pulse.conf"; }
 state() { # -> checksums of the inbox notes and every synced file, to show nothing changed
   (cd "$FO" && find . -type f -exec cksum {} + | sort)
   (cd "$SY" && find . -type f -exec cksum {} + | sort)
@@ -867,20 +869,47 @@ printf 'Completion time,Rate the week (1-5),What went well?\n11/12/2026 18:00:00
 check "mover: a late file in the same window exits 0" mover team-pulse
 check "mover: same window, one complete note" bash -c 'test "$(find "$1" -name "*.md" | wc -l | tr -d " ")" = 1 && n=$1/$2.md && grep -qx "respondents: 4" "$n" && grep -q "answer 1, with a comma" "$n" && grep -q "answer 3, with a comma" "$n" && grep -q "late same day" "$n"' _ "$FO" "$pulse-$w1"
 check "mover: every export of the window kept" test "$(find "$SY/processed/team-pulse/$w1" -name '*.csv' | wc -l | tr -d ' ')" = 4
+printf 'Completion time,Rate the week (1-5),What went well?\n2026-11-15 01:30:00,2,evening reply dated the UTC next day\n' >"$SY/team-pulse/utc.csv"
+before=$(state)
+check "mover: a reply dated the UTC next day is outside the window" expect_fail mover team-pulse
+check "mover: nothing changed by that refusal" test "$(state)" = "$before"
+setwin 2026-11-11 2026-11-15
+check "mover: widening to= while the note waits exits 0" mover team-pulse
+check "mover: one complete note under the wider window" bash -c 'test "$(find "$1" -name "*.md" | wc -l | tr -d " ")" = 1 && n=$1/$2.md && grep -qx "respondents: 5" "$n" && grep -qx "collected_to: 2026-11-15" "$n" && grep -q "answer 1, with a comma" "$n" && grep -q "late same day" "$n" && grep -q "UTC next day" "$n"' _ "$FO" "$pulse-$w1w"
+check "mover: the old-named note is removed" test ! -e "$FO/$pulse-$w1.md"
+check "mover: the exports move to the wider window's folder" bash -c 'test "$(find "$1/$2" -name "*.csv" | wc -l | tr -d " ")" = 5 && test ! -e "$1/$3"' _ "$SY/processed/team-pulse" "$w1w" "$w1"
+printf 'Completion time,Rate the week (1-5),What went well?\n11/13/2026 9:00:00,3,mid window\n' >"$SY/team-pulse/r7.csv"
+before=$(state)
+setwin 2026-11-12 2026-11-15
+check "mover: narrowing the window while the note waits is refused" expect_fail mover team-pulse
+check "mover: nothing changed by the narrowing refusal" test "$(state)" = "$before"
+setwin 2026-11-12 2026-11-16
+check "mover: shifting the window while the note waits is refused" expect_fail mover team-pulse
+check "mover: nothing changed by the shifting refusal" test "$(state)" = "$before"
+setwin 2026-11-11 2026-11-15
+check "mover: back on the window, the late file joins the note" mover team-pulse
+check "mover: still one complete note" bash -c 'test "$(find "$1" -name "*.md" | wc -l | tr -d " ")" = 1 && grep -qx "respondents: 6" "$1/$2.md"' _ "$FO" "$pulse-$w1w"
+w1=$w1w
 printf 'Completion time,Rate the week (1-5),What went well?\n12/14/2026 8:00:00,4,next window\n' >"$SY/team-pulse/r5.csv"
 before=$(state)
 check "mover: a next-window file while the note waits is refused" expect_fail mover team-pulse
 check "mover: nothing changed by that refusal" test "$(state)" = "$before"
-sed -i.bak "s/^from=.*/from=2026-12-01/; s/^to=.*/to=2026-12-31/" "$FV/.binnacle/forms/team-pulse.conf"
+setwin 2026-12-01 2026-12-31
 check "mover: a new window while the last note waits is refused" expect_fail mover team-pulse
 check "mover: that refusal names the waiting note" grep -q "$pulse-$w1.md, is not ingested yet" "$T/mover.out"
 check "mover: nothing changed by the new-window refusal" test "$(state)" = "$before"
 check "mover: --purge while the note waits is refused" expect_fail mover --purge team-pulse
 check "mover: nothing purged" test "$(state)" = "$before"
 mv "$FO/$pulse-$w1.md" "$T/ingested.md"
+setwin 2026-11-15 2026-12-31
+before=$(state)
+check "mover: a window overlapping an ingested one is refused" expect_fail mover team-pulse
+check "mover: that refusal names the earlier window" grep -q "overlaps window $w1," "$T/mover.out"
+check "mover: nothing changed by the overlap refusal" test "$(state)" = "$before"
+setwin 2026-12-01 2026-12-31
 check "mover: after ingest the new window converts" mover team-pulse
 check "mover: the new window's note holds only its responses" bash -c 'test "$(find "$1" -name "*.md" | wc -l | tr -d " ")" = 1 && grep -qx "respondents: 1" "$1/$2.md"' _ "$FO" "$pulse-$w2"
-check "mover: old exports stay under their window" bash -c 'test "$(find "$1/$2" -name "*.csv" | wc -l | tr -d " ")" = 4 && test -f "$1/$3/r5.csv"' _ "$SY/processed/team-pulse" "$w1" "$w2"
+check "mover: old exports stay under their window" bash -c 'test "$(find "$1/$2" -name "*.csv" | wc -l | tr -d " ")" = 6 && test -f "$1/$3/r5.csv"' _ "$SY/processed/team-pulse" "$w1" "$w2"
 mv "$FO/$pulse-$w2.md" "$T/ingested2.md"
 check "mover: --purge once ingested exits 0" mover --purge team-pulse
 check "mover: --purge deletes every processed export" test -z "$(find "$SY/processed/team-pulse" -name '*.csv')"

@@ -94,7 +94,7 @@ policies (HR, privacy, retention); they win over this checklist.
       audience=Platform team
       consent_notice_version=v1
       from=2026-11-02
-      to=2026-11-13
+      to=2026-11-14
       identity=anonymous
       invited=8
       ```
@@ -102,7 +102,11 @@ policies (HR, privacy, retention); they win over this checklist.
       `from=` and `to=` (YYYY-MM-DD) are the collection window and are
       required: the mover never infers one, and refuses the form when
       either is missing or a response is dated outside the window (it
-      names the file and row, never the value). Add `subject=<their name>`
+      names the file and row, never the value). Set `to=` one day after
+      the form closes: the `Completion time` Microsoft Forms gives is in
+      UTC, so a response sent late in the evening in the Americas is dated
+      the next day (the example closes the form on 13 November). Add
+      `subject=<their name>`
       only for a survey about one person. `platform` defaults to
       `msforms`. `date_order=dmy` or `date_order=mdy` says how to read
       dates like `05/11/2026`; the converter refuses such dates when no
@@ -135,7 +139,12 @@ has closed.
       `Binnacle forms/processed/<form>/<from>-to-<to>/`. Nothing is
       deleted, so responses that sync late are not lost: while the note
       is still in `raw/inbox/forms/`, run the mover again and the note is
-      rebuilt complete. Once the note has been ingested, late responses
+      rebuilt complete. If a late response is refused as outside the
+      window while the note is still waiting, widen the window (an
+      earlier `from=` or a later `to=`, never narrower or shifted): the
+      mover rebuilds the one note under the wider window from every
+      export, moves the exports to the new window's folder and removes
+      the old-named note. Once the note has been ingested, late responses
       for that window are refused.
 - [ ] **[work machine, human]** If the converter refused a form, it names
       the pattern class (email, phone, card, stop-list) and the column and
@@ -148,9 +157,11 @@ has closed.
       secret scan runs. Then `bin/binnacle-run` as usual.
 - [ ] **[work machine, human]** Before the next window, set its `from=`
       and `to=` in the form's `.conf`. The mover refuses a new window while
-      the last window's note is still in `raw/inbox/forms/`, so windows
-      never mix; once `bin/binnacle-run` has ingested it, the new window
-      starts with no earlier exports, and the old ones stay in
+      the last window's note is still in `raw/inbox/forms/`, and refuses
+      any window that overlaps one whose note has been ingested (it keeps
+      the list in `processed/<form>/.windows`), so windows never mix; once
+      `bin/binnacle-run` has ingested the last note, a later window starts
+      with no earlier exports, and the old ones stay in
       `processed/<form>/<old window>/`.
 - [ ] **[work machine, human]** Delete the processed exports when your
       retention review allows (refused while the last window's note is

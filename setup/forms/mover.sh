@@ -20,11 +20,16 @@
 # form with new .csv files the converter rebuilds the window's one note
 # from those and the window's earlier exports, kept in
 # <sync dir>/processed/<FORM>/<from>-to-<to>/, then the new files move
-# there too. The form is refused, nothing changed, when its settings lack
-# from or to, when a response is dated outside the window, when the last
-# window's note is still in raw/inbox/forms/ but from/to name another
-# window, or when this window's note has already left the inbox. Exports
-# are never deleted but by --purge. A refusal or error keeps the files
+# there too. While the last window's note is still in raw/inbox/forms/,
+# from/to may change only to a window that contains it: the note is then
+# rebuilt under the wider window from all its exports, which move to the
+# new window's folder, and the old-named note is removed. The form is
+# refused, nothing changed, when its settings lack from or to, when a
+# response is dated outside the window, when from/to change to a window
+# that does not contain the waiting note's, or when the window overlaps
+# one whose note has already left the inbox (every window written is
+# listed in processed/<FORM>/.windows). Exports are never deleted but by
+# --purge. A refusal or error keeps the files
 # where they are and moves on to the next form; the exit status is then 1.
 # The synced folder must be outside the vault.
 set -eu
@@ -150,27 +155,45 @@ for form in "${forms[@]}"; do
       continue ;;
   esac
   window=$conf_from-to-$conf_to
-  done_dir=$sync_dir/processed/$form/$window
+  form_dir=$sync_dir/processed/$form
+  done_dir=$form_dir/$window
   last_written "$form"
-  if [ -n "$last_note" ] && [ -f "$inbox/$last_note" ] && [ "$last_window" != "$window" ]; then
-    bn_warn "the note for window $last_window, raw/inbox/forms/$last_note, is not ingested yet; ingest it before moving to $window; files kept"
+  widen=""
+  if [ -n "$last_note" ] && [ -f "$inbox/$last_note" ]; then
+    if [ "$last_window" != "$window" ]; then
+      if [[ $conf_from > ${last_window%%-to-*} || $conf_to < ${last_window##*-to-} ]]; then
+        bn_warn "the note for window $last_window, raw/inbox/forms/$last_note, is not ingested yet; until it is, from/to may only widen to contain it, not change to $window; files kept"
+        failed=1
+        continue
+      fi
+      widen=$last_window
+    fi
+    skip=$last_window
+  else
+    skip=""
+  fi
+  overlap=""
+  if [ -f "$form_dir/.windows" ]; then
+    while IFS= read -r w || [ -n "$w" ]; do
+      [ -n "$w" ] && [ "$w" != "$skip" ] || continue
+      [[ $conf_from > ${w##*-to-} || $conf_to < ${w%%-to-*} ]] || overlap=$w
+    done <"$form_dir/.windows"
+  fi
+  if [ -n "$overlap" ]; then
+    bn_warn "window $window overlaps window $overlap, whose note has already left raw/inbox/forms/; set from= and to= for a later window, or remove the late file(s) from $dir; files kept"
     failed=1
     continue
   fi
-  if [ -n "$last_note" ] && [ ! -f "$inbox/$last_note" ] && [ "$last_window" = "$window" ]; then
-    bn_warn "the note for window $window has already left raw/inbox/forms/; set from= and to= for the next window, or remove the late file(s) from $dir; files kept"
-    failed=1
-    continue
-  fi
+  earlier_dir=$form_dir/${widen:-$window}
   earlier=()
-  if [ -d "$done_dir" ]; then
+  if [ -d "$earlier_dir" ]; then
     while IFS= read -r -d '' f; do earlier+=("$f"); done \
-      < <(find "$done_dir" -mindepth 1 -maxdepth 1 -type f -name '*.csv' -print0 | LC_ALL=C sort -z)
+      < <(find "$earlier_dir" -mindepth 1 -maxdepth 1 -type f -name '*.csv' -print0 | LC_ALL=C sort -z)
   fi
   clash=""
-  for f in "${files[@]}"; do [ ! -e "$done_dir/${f##*/}" ] || clash=${f##*/}; done
+  for f in "${files[@]}"; do [ ! -e "$earlier_dir/${f##*/}" ] || clash=${f##*/}; done
   if [ -n "$clash" ]; then
-    bn_warn "$clash is already in $done_dir; rename or remove the new copy; files kept"
+    bn_warn "$clash is already in $earlier_dir; rename or remove the new copy; files kept"
     failed=1
     continue
   fi
@@ -187,7 +210,18 @@ for form in "${forms[@]}"; do
     note=$(printf '%s\n' "$out" | sed -n 's|^binnacle-forms-to-inbox: wrote raw/inbox/forms/\([^ /]*\.md\) .*|\1|p')
     [ -n "$note" ] || bn_die "cannot tell which note the converter wrote for $form"
     mkdir -p "$done_dir"
-    printf '%s %s\n' "$window" "$note" >"$sync_dir/processed/$form/.note"
+    if [ -n "$widen" ]; then
+      [ "${#earlier[@]}" -eq 0 ] || mv -- "${earlier[@]}" "$done_dir/"
+      rmdir -- "$earlier_dir" 2>/dev/null || true
+      grep -vxF -- "$widen" "$form_dir/.windows" >"$form_dir/.windows.tmp" || true
+      mv -- "$form_dir/.windows.tmp" "$form_dir/.windows"
+    fi
+    printf '%s %s\n' "$window" "$note" >"$form_dir/.note"
+    grep -qxF -- "$window" "$form_dir/.windows" 2>/dev/null || printf '%s\n' "$window" >>"$form_dir/.windows"
+    if [ -n "$widen" ] && [ "$last_note" != "$note" ]; then
+      rm -f -- "${inbox:?}/$last_note"
+      bn_ok "replaced raw/inbox/forms/$last_note with $note"
+    fi
     mv -- "${files[@]}" "$done_dir/"
     bn_ok "${#files[@]} new response file(s) converted with ${#earlier[@]} earlier one(s); all kept in $done_dir"
   else
