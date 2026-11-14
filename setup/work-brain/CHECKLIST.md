@@ -248,7 +248,11 @@ step. Your notes and the wiki are never touched.
       revision in its first commit message), rebuilds that commit as
       `setup.sh` did, and compares it with the brain's template files. If
       you edited one, it stops and names it; undo the edit (or move it out
-      of the template file), commit, and re-run. Otherwise it copies what
+      of the template file), commit, and re-run. A brain you updated by
+      hand before has no recorded base, so its first commit names an older
+      one and the files you updated are listed as edited: do not undo
+      them; record the template commit you updated to
+      (`git config binnacle.templateBase <commit>`) and re-run. Otherwise it copies what
       changed upstream since then (new, changed, deleted and renamed
       files), re-applies the company scope rules to `CLAUDE.md` and the run
       prompt, and commits on a `binnacle-update/<id>` branch through the

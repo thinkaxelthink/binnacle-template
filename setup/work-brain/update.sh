@@ -218,6 +218,8 @@ if [ "${#edited[@]}" -gt 0 ]; then
   printf 'error: refusing: these template files were edited in the vault since base %s:\n' \
     "$(git -C "$src" rev-parse --short "$base")" >&2
   printf '  %s\n' "${edited[@]}" >&2
+  [ "$base_from" != "the first commit message" ] \
+    || bn_warn "the base came from the first commit message. If this brain was updated by hand since, do not undo those files: record the template commit it was updated to (git -C $vault config binnacle.templateBase <commit>) and re-run."
   bn_die "nothing was changed. Undo those edits (or move them out of template files), commit, and re-run."
 fi
 bn_ok "no template file edited in the vault"

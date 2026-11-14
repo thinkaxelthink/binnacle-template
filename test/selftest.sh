@@ -1330,9 +1330,14 @@ if [ "$template_rules" = yes ]; then
   git -C "$U" commit -qam tweak
   check "update: refuses a locally edited template file" expect_fail upd "$U"
   check "update: names each edited file" bash -c 'grep -qx "  README.md" "$1" && grep -qx "  .githooks/pre-commit" "$1"' _ "$T/upd.out"
+  check "update: recorded base gives no hand-update hint" bash -c '! grep -q "updated by hand" "$1"' _ "$T/upd.out"
   check "update: does not name unedited files" bash -c '! grep -q "CLAUDE.md" "$1"' _ "$T/upd.out"
   check "update: edit refusal changes nothing" test "$(git -C "$U" rev-list --count "$main_before..main")" = 1
   check "update: edit refusal leaves no branch" no_update_branch "$U"
+  git -C "$U" config --unset binnacle.templateBase
+  check "update: refuses an edited file with the base from the first commit" expect_fail upd "$U"
+  check "update: first-commit base says to record a hand update's base" grep -q 'updated by hand.*binnacle.templateBase' "$T/upd.out"
+  git -C "$U" config binnacle.templateBase "$tpl_base"
   git -C "$U" reset -q --hard "$main_before"
   check "update: hook failure stops the update" expect_fail env BINNACLE_GITLEAKS="$T/stubs/gitleaks-fail" \
     HOME="$WH" "$TPL/setup/work-brain/update.sh" "$U"
