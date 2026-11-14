@@ -234,7 +234,7 @@ step. Your notes and the wiki are never touched.
 
 - [ ] **[work machine, human]** Pull the template checkout (outside the
       vault, never the vault's own copy), commit or discard anything open in
-      the vault, and merge or delete any waiting `binnacle-run/*` branch.
+      the vault, and merge or delete any waiting `binnacle-update/*` branch.
       Connected, pull and push first so `main` matches GitHub, and log
       `gh` in. Then:
 
@@ -259,6 +259,6 @@ step. Your notes and the wiki are never touched.
       opens a PR **without auto-merge**: review it and merge it yourself,
       then pull `main`. The next `update.sh` run sees the merged PR and
       records the new base (a closed, unmerged PR leaves the base as it
-      was). It refuses while that PR, or a run PR, is open.
+      was). It refuses while that PR, or any other update PR, is open.
 - [ ] **[work machine, human]** It refuses `~/binnacle`, which is updated
       by its own setup, and any folder that is not a work brain.

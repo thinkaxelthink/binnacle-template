@@ -27,7 +27,7 @@
 # It refuses ~/binnacle (or anything resolving into it), a folder that is
 # not a work-brain vault, a vault with uncommitted changes or off main, a
 # connected vault whose main differs from origin's, a waiting
-# binnacle-run/* or binnacle-update/* branch or PR, and a base this
+# binnacle-update/* branch or PR, and a base this
 # checkout does not have.
 # Env: BINNACLE_GH (gh).
 set -eu
@@ -75,7 +75,7 @@ local_only=0
   || bn_die "refusing: $vault is not on $BASE; switch back to $BASE first"
 [ -z "$(git -C "$vault" status --porcelain)" ] \
   || bn_die "refusing: $vault has uncommitted changes; commit or discard them first (git -C $vault status)"
-waiting=$(git -C "$vault" for-each-ref --format='%(refname:short)' 'refs/heads/binnacle-run/*' 'refs/heads/binnacle-update/*' | tr '\n' ' ')
+waiting=$(git -C "$vault" for-each-ref --format='%(refname:short)' 'refs/heads/binnacle-update/*' | tr '\n' ' ')
 [ -z "$waiting" ] \
   || bn_die "refusing: a branch is still waiting: $waiting- merge it into $BASE or delete it first"
 
@@ -113,9 +113,9 @@ if [ "$local_only" -eq 0 ]; then
     git -C "$vault" config --unset binnacle.templateUpdateBranch || true
   fi
   open_prs=$(ghv pr list --state open --base "$BASE" --json headRefName,url \
-    --jq '.[] | select((.headRefName | startswith("binnacle-run/")) or (.headRefName | startswith("binnacle-update/"))) | .url') \
+    --jq '.[] | select(.headRefName | startswith("binnacle-update/")) | .url') \
     || bn_die "could not list open PRs with gh"
-  [ -z "$open_prs" ] || bn_die "refusing: a run or update PR is still open: $open_prs - merge or close it first"
+  [ -z "$open_prs" ] || bn_die "refusing: an update PR is still open: $open_prs - merge or close it first"
 fi
 
 # --- base --------------------------------------------------------------------------

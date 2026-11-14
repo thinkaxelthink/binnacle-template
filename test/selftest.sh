@@ -1309,10 +1309,10 @@ if [ "$template_rules" = yes ]; then
   check "update: refuses a vault with uncommitted changes" expect_fail upd "$U"
   check "update: says uncommitted changes" grep -q 'uncommitted changes' "$T/upd.out"
   rm "$U/soundings/wip.md"
-  git -C "$U" branch binnacle-run/20260101T000000Z
-  check "update: refuses while a run branch waits" expect_fail upd "$U"
-  check "update: names the waiting branch" grep -q 'still waiting: binnacle-run/20260101T000000Z' "$T/upd.out"
-  git -C "$U" branch -q -D binnacle-run/20260101T000000Z
+  git -C "$U" branch binnacle-update/20260101T000000Z
+  check "update: refuses while an update branch waits" expect_fail upd "$U"
+  check "update: names the waiting branch" grep -q 'still waiting: binnacle-update/20260101T000000Z' "$T/upd.out"
+  git -C "$U" branch -q -D binnacle-update/20260101T000000Z
   git -C "$U" config binnacle.templateBase deadbeef
   check "update: refuses an unknown base" expect_fail upd "$U"
   check "update: unknown base says so" grep -q 'unknown base' "$T/upd.out"
@@ -1334,7 +1334,9 @@ if [ "$template_rules" = yes ]; then
     'test -z "$(git -C "$1" branch --list "binnacle-update/*")" && test "$(git -C "$1" worktree list | wc -l | tr -d " ")" = 1' _ "$U"
 
   # Local only: main is fast-forwarded and the new base recorded.
-  check "update local: exits 0" upd "$U"
+  git -C "$U" branch binnacle-run/20260101T000000Z
+  check "update local: exits 0 while a run branch waits" upd "$U"
+  git -C "$U" branch -q -D binnacle-run/20260101T000000Z
   check "update local: one commit on main" test "$(git -C "$U" rev-list --count "$main_before..main")" = 1
   check "update local: changed file copied" grep -q 'Upstream README line.' "$U/README.md"
   check "update local: CLAUDE.md updated" grep -q 'Upstream schema line.' "$U/CLAUDE.md"
@@ -1378,7 +1380,7 @@ if [ "$template_rules" = yes ]; then
   git -C "$UR" config --unset binnacle.localOnly
   git -C "$UR" config --unset binnacle.templateBase
   : >"$T/gh.log"
-  check "update connected: refuses while a run PR is open" expect_fail env STUB_GH_OPEN=1 HOME="$WH" \
+  check "update connected: refuses while an update PR is open" expect_fail env STUB_GH_OPEN=1 HOME="$WH" \
     "$TPL/setup/work-brain/update.sh" "$UR"
   printf 'unpushed\n' >"$UR/soundings/unpushed.md"
   git -C "$UR" add -A
