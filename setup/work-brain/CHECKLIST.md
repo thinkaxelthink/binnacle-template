@@ -252,8 +252,8 @@ step. Your notes and the wiki are never touched.
       hand before has no recorded base, so its first commit names an older
       one and the files you updated are listed as edited: do not undo
       them; record the template commit you updated to
-      (`git config binnacle.templateBase <commit>`) and re-run. Otherwise it copies what
-      changed upstream since then (new, changed, deleted and renamed
+      (`git config binnacle.templateBase <commit>`) and re-run. Otherwise
+      it copies what changed upstream since then (new, changed, deleted and renamed
       files), re-applies the company scope rules to `CLAUDE.md` and the run
       prompt, and commits on a `binnacle-update/<id>` branch through the
       pre-commit scan. `wiki/`, `raw/`, `soundings/` and `audit/` are never
