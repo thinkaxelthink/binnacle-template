@@ -128,7 +128,9 @@ Each run sits between `=== <date> binnacle-nightly start` and
 `=== <date> binnacle-nightly end: exit <status>`. Exit 0 is a finished run
 (a PR link), an empty inbox ("nothing to do") or a skip ("skipped: ...");
 anything else is a failure, with the reason on the lines above and in the
-run's audit note. Past 1 MB the log moves to `nightly.log.1`. Claude
+run's audit note. With the Google Forms pull on, a failed pull also ends
+the night non-zero, with `forms pull failed` on the end line
+(`setup/forms/GOOGLE-CHECKLIST.md`, "Nightly"). Past 1 MB the log moves to `nightly.log.1`. Claude
 Code's own output for a run stays in the temporary folder the log names.
 If launchd cannot start the wrapper at all, its error is in
 `~/Library/Logs/binnacle/launchd.log`.
