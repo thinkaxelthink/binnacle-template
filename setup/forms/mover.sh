@@ -16,8 +16,11 @@
 # live in the vault, in the gitignored <vault>/.binnacle/forms/<FORM>.conf,
 # as key=value lines: form_title, form_id, audience, consent_notice_version,
 # from and to (the window, YYYY-MM-DD) (required), subject, identity,
-# invited, platform (default msforms), date_order (dmy or mdy). For each
-# form with new .csv files the converter rebuilds the window's one note
+# invited, platform (default msforms), date_order (dmy or mdy), tz (an
+# IANA time zone that UTC completion times are dated in; default: this
+# machine's). A window is inclusive local dates, so one that starts the
+# day after another ends does not overlap it. For each form with new
+# .csv files the converter rebuilds the window's one note
 # from those and the window's earlier exports, kept in
 # <sync dir>/processed/<FORM>/<from>-to-<to>/, then the new files move
 # there too. While the last window's note is still in raw/inbox/forms/,
@@ -107,14 +110,14 @@ read_conf() {
   local line key
   conf_form_title="" conf_form_id="" conf_audience="" conf_consent_notice_version=""
   conf_subject="" conf_identity="" conf_invited="" conf_platform=msforms
-  conf_from="" conf_to="" conf_date_order=""
+  conf_from="" conf_to="" conf_date_order="" conf_tz=""
   while IFS= read -r line || [ -n "$line" ]; do
     line=${line%$'\r'}
     case $line in "" | "#"*) continue ;; *=*) ;; *) bn_warn "$1: ignoring a line without '='"; continue ;; esac
     key=${line%%=*}
     case $key in
       form_title | form_id | audience | consent_notice_version | subject | identity | invited | platform \
-        | from | to | date_order)
+        | from | to | date_order | tz)
         printf -v "conf_$key" '%s' "${line#*=}" ;;
       *) bn_warn "$1: ignoring unknown key '$key'" ;;
     esac
@@ -205,6 +208,7 @@ for form in "${forms[@]}"; do
   [ -z "$conf_identity" ] || args+=(--identity "$conf_identity")
   [ -z "$conf_invited" ] || args+=(--invited "$conf_invited")
   [ -z "$conf_date_order" ] || args+=(--date-order "$conf_date_order")
+  [ -z "$conf_tz" ] || args+=(--tz "$conf_tz")
   if out=$("$converter" "${args[@]}" "${earlier[@]+"${earlier[@]}"}" "${files[@]}"); then
     printf '%s\n' "$out"
     note=$(printf '%s\n' "$out" | sed -n 's|^binnacle-forms-to-inbox: wrote raw/inbox/forms/\([^ /]*\.md\) .*|\1|p')

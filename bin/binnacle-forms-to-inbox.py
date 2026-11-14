@@ -205,21 +205,54 @@ def detect_platform(headers):
 
 # --- dates -----------------------------------------------------------------
 
+ZONED = re.compile(r"^(\d{4})-(\d{1,2})-(\d{1,2})[T ](\d{1,2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?\s*(Z|[+-]\d{2}:?\d{2})$",
+                   re.IGNORECASE)
 ISO_DATE = re.compile(r"^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:$|[ T])")
 LOCAL_DATE = re.compile(r"^(\d{1,2})[/.](\d{1,2})[/.](\d{2,4})(?:$|[ ,])")
 SERIAL = re.compile(r"^\d{5}(?:\.\d+)?$")
 
 
-def parse_dates(values, order, advice):
+def zoned_date(m, tz):
+    """The local date (TZ, else this machine's zone) of a ZONED match."""
+    off = m.group(7)
+    minutes = 0 if off.upper() == "Z" else (-1 if off[0] == "-" else 1) * (int(off[1:3]) * 60 + int(off[-2:]))
+    dt = datetime.datetime(*(int(m.group(i) or 0) for i in range(1, 7)),
+                           tzinfo=datetime.timezone(datetime.timedelta(minutes=minutes)))
+    return dt.astimezone(tz).date() if tz is not None else dt.astimezone().date()
+
+
+def load_tz(name):
+    try:
+        import zoneinfo
+    except ImportError:
+        raise Stop("--tz %s needs Python 3.9 or later (zoneinfo); leave it unset to use this machine's time zone"
+                   % name, 2)
+    try:
+        return zoneinfo.ZoneInfo(name)
+    except (zoneinfo.ZoneInfoNotFoundError, ValueError):
+        raise Stop("--tz %s: no such time zone here (an IANA name like America/New_York)" % name, 2)
+
+
+def parse_dates(values, order, advice, tz=None):
     """Dates of the given timestamp strings, in order, or None when one
     cannot be read.
 
+    A time with UTC (Z) or an offset becomes its date in TZ (default: this
+    machine's zone); other times are taken as local already.
     Day and month order for d/m/y forms: ORDER (dmy or mdy) when given, else
     told from a number over 12; refused, with ADVICE, when the data cannot
     tell."""
     out, local = [], []
     for v in values:
         v = v.strip()
+        m = ZONED.match(v)
+        if m:
+            try:
+                d = zoned_date(m, tz)
+            except ValueError:
+                return None
+            out.append((d.year, d.month, d.day))
+            continue
         m = ISO_DATE.match(v)
         if m:
             out.append((int(m.group(1)), int(m.group(2)), int(m.group(3))))
@@ -462,6 +495,7 @@ def parse_args(argv):
     p.add_argument("--to", dest="date_to")
     p.add_argument("--date-order", choices=["dmy", "mdy"])
     p.add_argument("--within-window", action="store_true")
+    p.add_argument("--tz")
     p.add_argument("--vault")
     p.add_argument("--stop-list")
     return p.parse_args(argv)
@@ -506,6 +540,7 @@ def main(argv):
         raise Stop("--invited %d is fewer than the %d responses" % (a.invited, len(rows)), 2)
 
     low = [h.lower() for h in headers]
+    tz = load_tz(a.tz) if a.tz else None
     d_from = iso_date("--from", a.date_from) if a.date_from else None
     d_to = iso_date("--to", a.date_to) if a.date_to else None
     if a.within_window and (d_from is None or d_to is None):
@@ -515,7 +550,7 @@ def main(argv):
         stamped = [] if tcol is None else [(name, n, cells[tcol]) for name, n, cells in rows if cells[tcol].strip()]
         advice = ("pass --date-order dmy or mdy (date_order= in the mover's form settings)" if a.within_window
                   else "pass --date-order dmy or mdy, or --from and --to (YYYY-MM-DD)")
-        dates = parse_dates([v for _, _, v in stamped], a.date_order, advice) if stamped else None
+        dates = parse_dates([v for _, _, v in stamped], a.date_order, advice, tz) if stamped else None
         if not dates:
             raise Stop("cannot read the response timestamps"
                        + (", so the window cannot be checked" if a.within_window

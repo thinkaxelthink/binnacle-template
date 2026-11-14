@@ -28,6 +28,11 @@
 #   --date-order dmy|mdy     day and month order of dates like 05/11/2026;
 #                            needed when no day or month in the export is
 #                            over 12 (refused otherwise, never guessed)
+#   --tz NAME                IANA time zone (e.g. America/New_York; needs
+#                            Python 3.9+) for times carrying UTC (Z) or an
+#                            offset: each becomes its local date there
+#                            (default: this machine's zone); times without
+#                            one are taken as local already
 #   --within-window          with --from and --to: refuse (exit 3) when a
 #                            response has no date inside the window, naming
 #                            its file and row (setup/forms/mover.sh uses it)

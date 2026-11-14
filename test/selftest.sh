@@ -690,6 +690,38 @@ check "forms dates: dmy window" test -f "$FO/form-${gl_hash:0:12}-2026-02-11-to-
 rm -rf "$FO"
 check "forms dates: --from and --to need no date order" conv --form-id ABC123 --from 2026-11-01 --to 2026-11-30 "$F/google.csv"
 check "forms dates: declared window" test -f "$FO/form-${gl_hash:0:12}-2026-11-01-to-2026-11-30.md"
+zoned() { # timestamp -> one-response msforms export at $F/zoned.csv
+  printf 'Completion time,What went well?\n%s,fine\n' "$1" >"$F/zoned.csv"
+}
+rm -rf "$FO"
+zoned 2026-12-01T03:00:00Z
+check "forms tz: a UTC time is dated in the local zone" env TZ=EST5 "$F2I" --vault "$FV" --form-title t --audience a \
+  --consent-notice-version v1 --form-id zoned "$F/zoned.csv"
+check "forms tz: 03:00 UTC on 1 Dec is 30 Nov at UTC-5" bash -c 'grep -qx "collected_from: 2026-11-30" "$1"/*.md' _ "$FO"
+rm -rf "$FO"
+zoned 2026-12-01T01:00:00+02:00
+check "forms tz: an explicit offset is honoured" env TZ=UTC0 "$F2I" --vault "$FV" --form-title t --audience a \
+  --consent-notice-version v1 --form-id zoned "$F/zoned.csv"
+check "forms tz: 01:00 at +02:00 on 1 Dec is 30 Nov in UTC" bash -c 'grep -qx "collected_to: 2026-11-30" "$1"/*.md' _ "$FO"
+rm -rf "$FO"
+zoned "2026-12-01 03:00:00"
+check "forms tz: a time without a zone exits 0" env TZ=EST5 "$F2I" --vault "$FV" --form-title t --audience a \
+  --consent-notice-version v1 --form-id zoned "$F/zoned.csv"
+check "forms tz: a time without a zone is not shifted" bash -c 'grep -qx "collected_from: 2026-12-01" "$1"/*.md' _ "$FO"
+rm -rf "$FO"
+zoned 2026-12-01T03:00:00Z
+if python3 -I -c 'import zoneinfo; zoneinfo.ZoneInfo("America/New_York")' >/dev/null 2>&1; then
+  check "forms tz: --tz America/New_York exits 0" env TZ=UTC0 "$F2I" --vault "$FV" --form-title t --audience a \
+    --consent-notice-version v1 --form-id zoned --tz America/New_York "$F/zoned.csv"
+  check "forms tz: --tz dates 03:00 UTC on 1 Dec as 30 Nov" bash -c 'grep -qx "collected_from: 2026-11-30" "$1"/*.md' _ "$FO"
+  check "forms tz: an unknown --tz is refused, nothing written" bash -c '! "$1" --vault "$2" --form-title t --audience a --consent-notice-version v1 --form-id z --tz Nowhere/Atlantis "$3" && test ! -e "$2/raw/inbox/forms/form-$4"' \
+    _ "$F2I" "$FV" "$F/zoned.csv" "$(sha z | cut -c1-12)-2026-11-30-to-2026-11-30.md"
+else
+  printf 'skip   forms tz: IANA --tz checks (python3 has no zoneinfo or zone data)\n'
+  check "forms tz: --tz without zoneinfo is refused, nothing written" bash -c '! "$1" --vault "$2" --form-title t --audience a --consent-notice-version v1 --form-id zoned --tz America/New_York "$3" && test ! -e "$2/raw/inbox/forms"' \
+    _ "$F2I" "$FV" "$F/zoned.csv"
+fi
+rm -rf "$FO"
 rm -rf "$FO"
 check "forms google csv: exits 0" conv --form-id "https://docs.google.com/forms/d/e/ABC123/viewform" --invited 5 --date-order mdy "$F/google.csv"
 N=$(only_note || true)
@@ -916,6 +948,17 @@ check "mover: --purge deletes every processed export" test -z "$(find "$SY/proce
 printf 'Completion time,Rate the week (1-5),What went well?\n12/15/2026 8:00:00,2,after ingest\n' >"$SY/team-pulse/r6.csv"
 check "mover: a late file for an ingested window is refused" expect_fail mover team-pulse
 check "mover: that refusal keeps the file" bash -c 'test -f "$1/team-pulse/r6.csv" && test -z "$(find "$2" -name "*.md")"' _ "$SY" "$FO"
+rm -f "$SY/team-pulse/r6.csv"
+setwin 2027-01-01 2027-01-31
+export TZ=EST5
+printf 'Completion time,Rate the week (1-5),What went well?\n2027-01-01T03:00:00Z,3,new year eve local\n' >"$SY/team-pulse/eve.csv"
+check "mover: a reply on the boundary dated the previous local day is refused" expect_fail mover team-pulse
+check "mover: that refusal names the file" grep -q "eve.csv, row 2" "$T/mover.out"
+rm -f "$SY/team-pulse/eve.csv"
+printf 'Completion time,Rate the week (1-5),What went well?\n2027-01-01T06:00:00Z,4,new year local\n' >"$SY/team-pulse/ny.csv"
+check "mover: a window starting the day after an ingested one exits 0" mover team-pulse
+check "mover: the boundary-day reply lands in that window only" bash -c 'test "$(find "$1" -name "*.md" | wc -l | tr -d " ")" = 1 && grep -qx "respondents: 1" "$1/$2-2027-01-01-to-2027-01-31.md" && grep -q "new year local" "$1/$2-2027-01-01-to-2027-01-31.md"' _ "$FO" "$pulse"
+unset TZ
 check "mover: refuses a synced folder inside the vault" expect_fail mover --sync-dir "$FV/raw"
 git -C "$FV" config --unset binnacle.formsSyncDir
 check "mover: refuses without a synced folder" expect_fail mover

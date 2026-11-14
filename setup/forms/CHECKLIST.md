@@ -57,7 +57,10 @@ policies (HR, privacy, retention); they win over this checklist.
      an "Apply to each", put the next two actions inside that too.
   2. **Create CSV table** (Data Operation): From: the expression
      `createArray(body('Get_response_details'))`; Columns: Custom. One
-     column `Completion time` with the response's submission date, then
+     column `Completion time` with the response's submission time in UTC,
+     the expression
+     `formatDateTime(body('Get_response_details')?['submitDate'], 'yyyy-MM-ddTHH:mm:ssZ')`
+     (it ends in `Z`, so the converter dates it in your time zone), then
      one column per question: header the question exactly as in the form,
      value that question's answer. Add no responder name, email or
      response id column.
@@ -94,7 +97,7 @@ policies (HR, privacy, retention); they win over this checklist.
       audience=Platform team
       consent_notice_version=v1
       from=2026-11-02
-      to=2026-11-14
+      to=2026-11-13
       identity=anonymous
       invited=8
       ```
@@ -102,12 +105,14 @@ policies (HR, privacy, retention); they win over this checklist.
       `from=` and `to=` (YYYY-MM-DD) are the collection window and are
       required: the mover never infers one, and refuses the form when
       either is missing or a response is dated outside the window (it
-      names the file and row, never the value). Set `to=` one day after
-      the form closes: the `Completion time` Microsoft Forms gives is in
-      UTC, so a response sent late in the evening in the Americas is dated
-      the next day (the example closes the form on 13 November). Add
-      `subject=<their name>`
-      only for a survey about one person. `platform` defaults to
+      names the file and row, never the value). Both dates are included
+      and are local dates: each UTC `Completion time` is dated in your
+      time zone first, so a reply sent late in the evening in the
+      Americas stays on its local day, and a window starting the day
+      after the last one ended does not overlap it. `tz=` sets that time
+      zone as an IANA name, e.g. `tz=America/New_York` (needs Python 3.9
+      or later); without it the work machine's own time zone is used.
+      Add `subject=<their name>` only for a survey about one person. `platform` defaults to
       `msforms`. `date_order=dmy` or `date_order=mdy` says how to read
       dates like `05/11/2026`; the converter refuses such dates when no
       day or month in them is over 12 and neither is set; it never
