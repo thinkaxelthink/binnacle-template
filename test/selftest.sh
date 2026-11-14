@@ -73,6 +73,10 @@ case "$1 $2" in
     for a in "$@"; do [ "$prev" = --body-file ] && cp "$a" "$STUB_BODY"; prev=$a; done
     echo "https://github.com/example/binnacle/pull/1"; exit 0 ;;
   "pr merge") exit 0 ;;
+  "auth git-credential")
+    cat >/dev/null
+    [ "$3" = get ] && printf 'username=x-access-token\npassword=stub-token\n'
+    exit 0 ;;
   "api --paginate")
     [ "${STUB_ORG_APPS:-}" = FAIL ] && exit 1
     [ -n "${STUB_ORG_APPS:-}" ] || exit 0
@@ -1160,7 +1164,33 @@ if command -v jq >/dev/null 2>&1; then
 else
   printf 'skip   connect: app installation warning (jq not installed)\n'
 fi
+helper_key=credential.https://github.com.helper
+check "connect: credential helper empty entry then gh by absolute path" \
+  test "$(git -C "$B" config --local --get-all "$helper_key")" = "$(printf "\n!'%s' auth git-credential" "$BINNACLE_GH")"
+check "connect: no credential helper in global config" expect_fail git config --global --get-regexp '^credential\.'
 check "connect: re-run is safe" connect --url "$BR"
+check "connect: re-run adds no duplicate helper entries" \
+  test "$(git -C "$B" config --local --get-all "$helper_key" | wc -l | tr -d ' ')" = 2
+# Obsidian on macOS runs git with a minimal PATH: the helper must still find gh.
+gitbin=$(command -v git)
+check "connect: credential helper runs under PATH=/usr/bin:/bin" bash -c \
+  'printf "protocol=https\nhost=github.com\n\n" | env PATH=/usr/bin:/bin GIT_TERMINAL_PROMPT=0 "$1" -C "$2" credential fill | grep -q "^password=stub-token$"' \
+  _ "$gitbin" "$B"
+# The default BINNACLE_GH is the bare name gh: the helper must hold where
+# PATH found it, quoted, even in a directory with a space.
+mkdir -p "$T/gh bin"
+cp "$T/stubs/gh" "$T/gh bin/gh"
+check "connect: bare gh resolved from PATH" \
+  env PATH="$T/gh bin:$PATH" BINNACLE_GH=gh "$B/setup/work-brain/connect-remote.sh" --url "$BR"
+check "connect: helper names the resolved gh by quoted absolute path" \
+  test "$(git -C "$B" config --local --get-all "$helper_key" | sed -n 2p)" = "!'$T/gh bin/gh' auth git-credential"
+check "connect: resolved gh helper runs under PATH=/usr/bin:/bin" bash -c \
+  'printf "protocol=https\nhost=github.com\n\n" | env PATH=/usr/bin:/bin GIT_TERMINAL_PROMPT=0 "$1" -C "$2" credential fill | grep -q "^password=stub-token$"' \
+  _ "$gitbin" "$B"
+check "connect: refuses when gh is not found" expect_fail env BINNACLE_GH="$T/no-such-gh" \
+  "$B/setup/work-brain/connect-remote.sh" --url "$BR"
+check "connect: says gh not found" bash -c 'env BINNACLE_GH="$1/no-such-gh" "$2/setup/work-brain/connect-remote.sh" --url "$3" 2>&1 | grep -q "gh not found"' \
+  _ "$T" "$B" "$BR"
 check "connect: setup re-run accepts the connected origin" wb_setup --org acme-engineering --user jdoe
 check "connect: refuses a different repository once connected" expect_fail connect --url "$T/gh-acme2/binnacle-acme-engineering-jdoe.git"
 git -C "$B" remote set-url origin "$T/elsewhere/binnacle-acme-engineering-jdoe.git"
@@ -1168,6 +1198,24 @@ check "connect: setup refuses an origin changed by hand" expect_fail wb_setup --
 git -C "$B" remote set-url origin "$BR"
 check "connect: refuses to run in ~/binnacle" expect_fail \
   env HOME="$WH" "$WH/binnacle/setup/work-brain/connect-remote.sh" --url "$BR"
+# GitHub owner/repo compare case-insensitively: a mixed-case --url matches the
+# lowercase origin. Both spellings are rewritten to the local bare repository.
+check "work-brain: GitHub remote key lowercases owner/repo, drops .git" \
+  test "$(wblib wb_remote_key https://github.com/Acme/Binnacle-X.git/)" = https://github.com/acme/binnacle-x
+check "work-brain: non-GitHub remote key unchanged" test "$(wblib wb_remote_key /tmp/Repo.git)" = /tmp/Repo.git
+gh_lower=https://github.com/acme-engineering/binnacle-acme-engineering-jdoe.git
+gh_mixed=https://github.com/Acme-Engineering/Binnacle-Acme-Engineering-JDoe
+git config --global url."$BR".insteadOf "$gh_mixed"
+git config --global url."$BR".pushInsteadOf "$gh_lower"
+git -C "$B" remote set-url origin "$gh_lower"
+git -C "$B" config binnacle.remoteUrl "$gh_lower"
+check "connect: accepts a mixed-case --url for the lowercase origin" connect --url "$gh_mixed"
+check "connect: records the URL as given" test "$(git -C "$B" config binnacle.remoteUrl)" = "$gh_mixed"
+check "connect: setup accepts origin and recorded URL differing only in case" wb_setup --org acme-engineering --user jdoe
+check "connect: still refuses another owner's repository" expect_fail \
+  connect --url https://github.com/Other-Org/binnacle-acme-engineering-jdoe.git
+check "connect: says origin points elsewhere for another owner" grep -q 'points elsewhere' "$T/connect.out"
+git config --global --remove-section url."$BR"
 check "work-brain: personal ~/binnacle untouched" test "$(personal_sum)" = "$personal_before"
 
 printf '\n%s passed, %s failed\n' "$passed" "$failed"

@@ -8,9 +8,13 @@
 #              its name must be the brain's name
 #
 # Before pushing it re-runs the collision checks: the vault must be a work
-# brain (never ~/binnacle), any existing origin must be this URL, the
+# brain (never ~/binnacle), any existing origin must be this repository
+# (GitHub owner and name compared case-insensitively, ignoring a trailing
+# .git or /), the
 # repository must be reachable and hold nothing but this brain's own
-# history, and when gh can see it, it must be private. Afterwards it checks
+# history, and when gh can see it, it must be private. It sets this vault's
+# credential helper for https://github.com to gh by absolute path, so git
+# run from Obsidian (minimal PATH) finds it. Afterwards it checks
 # the org's base repository permission and the org's GitHub App
 # installations, and warns, with the fix, when org members or an app
 # installed on all repositories could read the repository. Create the empty
@@ -57,11 +61,23 @@ if [ "$(printf '%s' "$repo_name" | tr '[:upper:]' '[:lower:]')" != "$name" ]; th
 fi
 
 origin=$(git -C "$vault" remote get-url origin 2>/dev/null || true)
-if [ -n "$origin" ] && [ "$origin" != "$url" ]; then
+if [ -n "$origin" ] && ! wb_same_remote "$origin" "$url"; then
   bn_die "refusing: origin already points elsewhere ($origin); nothing was changed"
 fi
 git -C "$vault" rev-parse --verify -q 'refs/heads/main^{commit}' >/dev/null \
   || bn_die "$vault has no main branch with a commit"
+
+# git (and Obsidian Git) reach GitHub through gh's login. Obsidian on macOS
+# starts with a minimal PATH, so the credential helper names gh by its
+# absolute path, resolved now.
+gh_path=$(command -v "$GH" 2>/dev/null || true)
+case $gh_path in
+  /*) ;;
+  *) bn_die "gh not found ('$GH'); install it (brew install gh) and log in (CHECKLIST.md), then re-run" ;;
+esac
+gh_quoted=$(printf '%s' "$gh_path" | sed "s/'/'\\\\''/g")
+gh_helper="!'$gh_quoted' auth git-credential"
+helper_key=credential.https://github.com.helper
 
 # GitHub visibility, when gh can see the repository.
 owner_repo=""
@@ -81,7 +97,7 @@ else
 fi
 
 # What the remote already holds must be this brain's own history.
-heads=$(git -C "$vault" ls-remote --heads "$url" 2>&1) \
+heads=$(git -c "$helper_key=" -c "$helper_key=$gh_helper" -C "$vault" ls-remote --heads "$url" 2>&1) \
   || bn_die "cannot read $url. Create the empty private repository first and make sure your credentials can reach it (CHECKLIST.md).
 $heads"
 foreign=""
@@ -106,6 +122,11 @@ else
   bn_ok "origin already $url"
 fi
 git -C "$vault" config binnacle.remoteUrl "$url"
+# An empty entry first drops helpers inherited from the global config.
+git -C "$vault" config --local --unset-all "$helper_key" || true
+git -C "$vault" config --local --add "$helper_key" ""
+git -C "$vault" config --local --add "$helper_key" "$gh_helper"
+bn_ok "credential helper for https://github.com (this vault only): $gh_path auth git-credential"
 git -C "$vault" push -q -u origin main || bn_die "git push failed; fix access and re-run (nothing else changed)"
 bn_ok "main pushed"
 git -C "$vault" config --unset binnacle.localOnly || true
