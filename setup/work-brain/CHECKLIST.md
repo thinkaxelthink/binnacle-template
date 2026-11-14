@@ -255,9 +255,10 @@ step. Your notes and the wiki are never touched.
       (`git config binnacle.templateBase <commit>`) and re-run. Otherwise
       it copies what changed upstream since then (new, changed, deleted
       and renamed files), re-applies the company scope rules to `CLAUDE.md`
-      and the run prompt, and commits on a `binnacle-update/<id>` branch through the
-      pre-commit scan. `wiki/`, `raw/`, `soundings/` and `audit/` are never
-      touched: an upstream change there is listed for you to copy by hand.
+      and the run prompt, and commits on a `binnacle-update/<id>` branch
+      through the pre-commit scan. `wiki/`, `raw/`, `soundings/` and
+      `audit/` are never touched: an upstream change there is listed for
+      you to copy by hand.
 - [ ] **[work machine, human]** Local only, `main` is fast-forwarded and
       the new base recorded: done. Connected, it pushes the branch and
       opens a PR **without auto-merge**: review it and merge it yourself,

@@ -155,8 +155,9 @@ stop-list. It never commits. In a work brain, a Power Automate flow and
 through the Forms API, read-only, once each window has closed, and can run
 just before the nightly run (opt in; `setup/forms/GOOGLE-CHECKLIST.md`),
 or you run it on a Google Forms export by hand. `CLAUDE.md` says how
-such notes are ingested, including the optional `wiki/people/` zone for a manager's surveys about
-direct reports (off unless `git config binnacle.peopleZone true`).
+such notes are ingested, including the optional `wiki/people/` zone for a
+manager's surveys about direct reports (off unless
+`git config binnacle.peopleZone true`).
 
 ## Self-test
 
