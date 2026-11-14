@@ -52,9 +52,30 @@ mkdir -p "$T/seed" "$T/stubs"
 # never pulls its notes, docs or tracked .obsidian/ settings into fixtures.
 template_paths=(.githooks .github .gitignore .gitleaks.toml .shellcheckrc CLAUDE.md README.md
   audit/README.md audit/runs.base audit/runs/.gitkeep bin raw/inbox/.gitkeep setup
-  soundings/.gitkeep test wiki/index.md wiki/log.md)
+  soundings/.gitkeep test)
 (cd "$repo" && git ls-files -z -co --exclude-standard -- "${template_paths[@]}" | tar --null -T - -cf -) \
   | tar -xf - -C "$T/seed"
+mkdir -p "$T/seed/wiki"
+cat >"$T/seed/wiki/index.md" <<'MD'
+# Index
+
+Catalog of every wiki page, one line each. Maintained by Claude Code on
+shoyu; see CLAUDE.md, "index.md".
+
+## Sources
+
+## Concepts
+
+## Entities
+
+## Syntheses
+MD
+cat >"$T/seed/wiki/log.md" <<'MD'
+# Log
+
+Append-only record of wiki operations, newest last. Each entry starts with
+`## [YYYY-MM-DD] <operation> | <title>`; see CLAUDE.md, "log.md".
+MD
 git -C "$T/seed" init -q
 git -C "$T/seed" add -A
 git -C "$T/seed" commit -qm seed
@@ -999,116 +1020,124 @@ check "work-brain: name binnacle-<org>-<user>" \
   test "$(wblib wb_name Acme-Engineering JDoe)" = binnacle-acme-engineering-jdoe
 check "work-brain: name refuses an org with nothing left after slugging" expect_fail wblib wb_name '!!!' jdoe
 
-B=$WH/binnacle-acme-engineering-jdoe
-wb_setup() { # args... -> setup from the seed checkout, output in $T/wb.out
-  env HOME="$WH" "$T/seed/setup/work-brain/setup.sh" "$@" >"$T/wb.out" 2>&1
-}
-global_before=$(cat "$T/gitconfig")
-check "work-brain setup: refuses without --org when not on a terminal" expect_fail wb_setup --user jdoe </dev/null
-check "work-brain setup: creates the brain, no remote" wb_setup --org Acme-Engineering --user JDoe --git-email jdoe@acme.example
-check "work-brain setup: default folder ~/binnacle-<org>-<user>" test -d "$B/.git"
-check "work-brain setup: one commit on main" test "$(git -C "$B" rev-list --count main 2>/dev/null)" = 1
-check "work-brain setup: clean tree after the first commit" test -z "$(git -C "$B" status --porcelain)"
-check "work-brain setup: no remote" test -z "$(git -C "$B" remote)"
-check "work-brain setup: local only" test "$(git -C "$B" config binnacle.localOnly)" = true
-check "work-brain setup: runs the AI writer (wiki-writer)" test "$(git -C "$B" config binnacle.role)" = wiki-writer
-check "work-brain setup: token item named after the brain" \
-  test "$(git -C "$B" config binnacle.ghTokenItem)" = binnacle-acme-engineering-jdoe-gh-token
-check "work-brain setup: hook installed" test "$(git -C "$B" config --local core.hooksPath)" = .githooks
-check "work-brain setup: vault-only work email" test "$(git -C "$B" config --local user.email)" = jdoe@acme.example
-check "work-brain setup: user.name defaults to the GitHub user" test "$(git -C "$B" config --local user.name)" = jdoe
-check "work-brain setup: global git config untouched" test "$(cat "$T/gitconfig")" = "$global_before"
-check "work-brain setup: CLAUDE.md states the company content limits" grep -q "payment data, minors' names, health or" "$B/CLAUDE.md"
-check "work-brain setup: CLAUDE.md names no personal machine" bash -c '! grep -q shoyu "$1"' _ "$B/CLAUDE.md"
-check "work-brain setup: CLAUDE.md drops the personal scope" bash -c '! grep -q "Scope is personal" "$1"' _ "$B/CLAUDE.md"
-check "work-brain setup: run prompt skips the limited material" grep -q 'health or waiver records' "$B/bin/binnacle-run.prompt.md"
-check "work-brain setup: CLAUDE.md allows only the owner's Forms flow" grep -q "own Microsoft Forms flow may" "$B/CLAUDE.md"
-check "work-brain setup: template CLAUDE.md unchanged" bash -c 'grep -q "Scope is personal" "$1"' _ "$repo/CLAUDE.md"
-check "work-brain hook: rejects a file over the cap" expect_fail env BINNACLE_MAX_FILE_BYTES=4 \
-  bash -c 'printf 12345 >"$1/raw/inbox/big.md" && git -C "$1" add -A && git -C "$1" commit -qm big' _ "$B"
-git -C "$B" reset -q --hard
-git -C "$B" clean -qfdx
-check "work-brain hook: rejects when gitleaks flags" expect_fail env BINNACLE_GITLEAKS="$T/stubs/gitleaks-fail" \
-  bash -c 'printf x >"$1/soundings/a.md" && git -C "$1" add -A && git -C "$1" commit -qm a' _ "$B"
-git -C "$B" reset -q --hard
-git -C "$B" clean -qfdx
-check "work-brain setup: re-run is safe" wb_setup --org acme-engineering --user jdoe
-check "work-brain setup: re-run adds no commit" test "$(git -C "$B" rev-list --count main)" = 1
-check "work-brain setup: re-run from the vault's own copy" env HOME="$WH" "$B/setup/work-brain/setup.sh" --org acme-engineering --user jdoe
+# Inside a work brain, CLAUDE.md and the run prompt already carry the work
+# rules, so a brain cannot be made from this checkout: skip what needs one.
+template_rules=no
+grep -q "This vault is a personal LLM-maintained wiki," "$repo/CLAUDE.md" && template_rules=yes
+[ "$template_rules" = yes ] || printf 'skip   work-brain setup, run and connect (this checkout is a work brain: CLAUDE.md has the work rules)\n'
 
-# Collisions: nothing but a new folder or this brain's own vault.
-mkdir -p "$WH/foreign"
-check "work-brain collision: refuses an existing foreign folder" expect_fail wb_setup --org acme --user jdoe --dir "$WH/foreign"
-check "work-brain collision: foreign folder left empty" test -z "$(ls -A "$WH/foreign")"
-git init -q "$WH/other-repo"
-check "work-brain collision: refuses an unrelated git repo" expect_fail wb_setup --org acme --user jdoe --dir "$WH/other-repo"
-check "work-brain collision: refuses another brain's vault" expect_fail wb_setup --org acme-engineering --user someone --dir "$B"
-check "work-brain collision: refuses ~/binnacle" expect_fail wb_setup --org acme --user jdoe --dir "$WH/binnacle"
-check "work-brain collision: refuses a folder inside ~/binnacle" expect_fail wb_setup --org acme --user jdoe --dir "$WH/binnacle/brain"
-ln -s "$WH/binnacle" "$WH/binnacle-acme-jdoe"
-check "work-brain collision: refuses a symlink to ~/binnacle" expect_fail wb_setup --org acme --user jdoe
-rm "$WH/binnacle-acme-jdoe"
-git -C "$B" remote add origin "$T/elsewhere.git"
-check "work-brain collision: refuses a vault whose origin points elsewhere" expect_fail wb_setup --org acme-engineering --user jdoe
-check "work-brain collision: says origin points elsewhere" grep -q 'points elsewhere' "$T/wb.out"
-git -C "$B" remote remove origin
-check "work-brain collision: refuses to copy from a vault with content" expect_fail \
-  env HOME="$WH" "$V/setup/work-brain/setup.sh" --org acme --user jdoe2
-check "work-brain collision: content refusal creates nothing" test ! -e "$WH/binnacle-acme-jdoe2"
+if [ "$template_rules" = yes ]; then
+  B=$WH/binnacle-acme-engineering-jdoe
+  wb_setup() { # args... -> setup from the seed checkout, output in $T/wb.out
+    env HOME="$WH" "$T/seed/setup/work-brain/setup.sh" "$@" >"$T/wb.out" 2>&1
+  }
+  global_before=$(cat "$T/gitconfig")
+  check "work-brain setup: refuses without --org when not on a terminal" expect_fail wb_setup --user jdoe </dev/null
+  check "work-brain setup: creates the brain, no remote" wb_setup --org Acme-Engineering --user JDoe --git-email jdoe@acme.example
+  check "work-brain setup: default folder ~/binnacle-<org>-<user>" test -d "$B/.git"
+  check "work-brain setup: one commit on main" test "$(git -C "$B" rev-list --count main 2>/dev/null)" = 1
+  check "work-brain setup: clean tree after the first commit" test -z "$(git -C "$B" status --porcelain)"
+  check "work-brain setup: no remote" test -z "$(git -C "$B" remote)"
+  check "work-brain setup: local only" test "$(git -C "$B" config binnacle.localOnly)" = true
+  check "work-brain setup: runs the AI writer (wiki-writer)" test "$(git -C "$B" config binnacle.role)" = wiki-writer
+  check "work-brain setup: token item named after the brain" \
+    test "$(git -C "$B" config binnacle.ghTokenItem)" = binnacle-acme-engineering-jdoe-gh-token
+  check "work-brain setup: hook installed" test "$(git -C "$B" config --local core.hooksPath)" = .githooks
+  check "work-brain setup: vault-only work email" test "$(git -C "$B" config --local user.email)" = jdoe@acme.example
+  check "work-brain setup: user.name defaults to the GitHub user" test "$(git -C "$B" config --local user.name)" = jdoe
+  check "work-brain setup: global git config untouched" test "$(cat "$T/gitconfig")" = "$global_before"
+  check "work-brain setup: CLAUDE.md states the company content limits" grep -q "payment data, minors' names, health or" "$B/CLAUDE.md"
+  check "work-brain setup: CLAUDE.md names no personal machine" bash -c '! grep -q shoyu "$1"' _ "$B/CLAUDE.md"
+  check "work-brain setup: CLAUDE.md drops the personal scope" bash -c '! grep -q "Scope is personal" "$1"' _ "$B/CLAUDE.md"
+  check "work-brain setup: run prompt skips the limited material" grep -q 'health or waiver records' "$B/bin/binnacle-run.prompt.md"
+  check "work-brain setup: CLAUDE.md allows only the owner's Forms flow" grep -q "own Microsoft Forms flow may" "$B/CLAUDE.md"
+  check "work-brain setup: template CLAUDE.md unchanged" bash -c 'grep -q "Scope is personal" "$1"' _ "$repo/CLAUDE.md"
+  check "work-brain hook: rejects a file over the cap" expect_fail env BINNACLE_MAX_FILE_BYTES=4 \
+    bash -c 'printf 12345 >"$1/raw/inbox/big.md" && git -C "$1" add -A && git -C "$1" commit -qm big' _ "$B"
+  git -C "$B" reset -q --hard
+  git -C "$B" clean -qfdx
+  check "work-brain hook: rejects when gitleaks flags" expect_fail env BINNACLE_GITLEAKS="$T/stubs/gitleaks-fail" \
+    bash -c 'printf x >"$1/soundings/a.md" && git -C "$1" add -A && git -C "$1" commit -qm a' _ "$B"
+  git -C "$B" reset -q --hard
+  git -C "$B" clean -qfdx
+  check "work-brain setup: re-run is safe" wb_setup --org acme-engineering --user jdoe
+  check "work-brain setup: re-run adds no commit" test "$(git -C "$B" rev-list --count main)" = 1
+  check "work-brain setup: re-run from the vault's own copy" env HOME="$WH" "$B/setup/work-brain/setup.sh" --org acme-engineering --user jdoe
 
-# Local-only runs: no remote, no gh; main is fast-forwarded to the run.
-: >"$T/gh.log"
-printf 'A work idea.\n' >"$B/raw/inbox/work-idea.md"
-git -C "$B" add -A
-git -C "$B" commit -qm capture
-brun() { "$B/bin/binnacle-run" "$@" >"$T/brun.out" 2>&1; }
-check "work-brain run --dry-run: exits 0" brun --dry-run
-check "work-brain run --dry-run: says local only" grep -q 'local only: no push, no PR' "$T/brun.out"
-check "work-brain run --dry-run: lists the source" grep -q 'raw/inbox/work-idea.md' "$T/brun.out"
-main_before=$(git -C "$B" rev-parse main)
-check "work-brain run: ok run exits 0" env STUB_CLAUDE_MODE=ok "$B/bin/binnacle-run" >"$T/brun.out" 2>&1
-check "work-brain run: main fast-forwarded" git -C "$B" merge-base --is-ancestor "$main_before" main
-check "work-brain run: main moved" test "$(git -C "$B" rev-parse main)" != "$main_before"
-check "work-brain run: source moved on main" bash -c 'ls "$1"/raw/sources/*/work-idea.md' _ "$B"
-check "work-brain run: wiki page on main" test -f "$B/wiki/concepts/stub-concept.md"
-check "work-brain run: no run branch left" test -z "$(git -C "$B" branch --list 'binnacle-run/*')"
-check "work-brain run: no GitHub call" test ! -s "$T/gh.log"
-check "work-brain run: still no remote" test -z "$(git -C "$B" remote)"
-check "work-brain run: audit note says local only" bash -c 'grep -q "^- PR: none (local only" "$1"/audit/runs/*.md' _ "$B"
-check "work-brain run: audit note merged true" bash -c 'grep -q "^merged: true$" "$1"/audit/runs/*.md' _ "$B"
-printf 'Another work idea.\n' >"$B/raw/inbox/second.md"
-git -C "$B" add -A
-git -C "$B" commit -qm capture2
-main_before=$(git -C "$B" rev-parse main)
-sleep 1
-check "work-brain run: Claude failure exits non-zero" expect_fail env STUB_CLAUDE_MODE=crash "$B/bin/binnacle-run"
-check "work-brain run: failed run leaves main alone" test "$(git -C "$B" rev-parse main)" = "$main_before"
-check "work-brain run: failed run keeps its branch" test -n "$(git -C "$B" branch --list 'binnacle-run/*')"
-check "work-brain run: refuses while a run branch waits" expect_fail env STUB_CLAUDE_MODE=ok "$B/bin/binnacle-run"
-git -C "$B" for-each-ref --format='%(refname:short)' 'refs/heads/binnacle-run/*' | xargs git -C "$B" branch -q -D
-check "work-brain run: no GitHub call on failure either" test ! -s "$T/gh.log"
+  # Collisions: nothing but a new folder or this brain's own vault.
+  mkdir -p "$WH/foreign"
+  check "work-brain collision: refuses an existing foreign folder" expect_fail wb_setup --org acme --user jdoe --dir "$WH/foreign"
+  check "work-brain collision: foreign folder left empty" test -z "$(ls -A "$WH/foreign")"
+  git init -q "$WH/other-repo"
+  check "work-brain collision: refuses an unrelated git repo" expect_fail wb_setup --org acme --user jdoe --dir "$WH/other-repo"
+  check "work-brain collision: refuses another brain's vault" expect_fail wb_setup --org acme-engineering --user someone --dir "$B"
+  check "work-brain collision: refuses ~/binnacle" expect_fail wb_setup --org acme --user jdoe --dir "$WH/binnacle"
+  check "work-brain collision: refuses a folder inside ~/binnacle" expect_fail wb_setup --org acme --user jdoe --dir "$WH/binnacle/brain"
+  ln -s "$WH/binnacle" "$WH/binnacle-acme-jdoe"
+  check "work-brain collision: refuses a symlink to ~/binnacle" expect_fail wb_setup --org acme --user jdoe
+  rm "$WH/binnacle-acme-jdoe"
+  git -C "$B" remote add origin "$T/elsewhere.git"
+  check "work-brain collision: refuses a vault whose origin points elsewhere" expect_fail wb_setup --org acme-engineering --user jdoe
+  check "work-brain collision: says origin points elsewhere" grep -q 'points elsewhere' "$T/wb.out"
+  git -C "$B" remote remove origin
+  check "work-brain collision: refuses to copy from a vault with content" expect_fail \
+    env HOME="$WH" "$V/setup/work-brain/setup.sh" --org acme --user jdoe2
+  check "work-brain collision: content refusal creates nothing" test ! -e "$WH/binnacle-acme-jdoe2"
 
-# People zone: wiki/people/ is written only with binnacle.peopleZone true.
-printf 'A survey note.\n' >"$B/raw/inbox/survey.md"
-git -C "$B" add -A
-git -C "$B" commit -qm capture3
-main_before=$(git -C "$B" rev-parse main)
-sleep 1
-check "people zone off: a run writing wiki/people/ fails" \
-  expect_fail env STUB_CLAUDE_MODE=people STUB_PROMPT="$T/prompt.txt" "$B/bin/binnacle-run"
-check "people zone off: the prompt says off" grep -q 'is \*\*off\*\* in this vault' "$T/prompt.txt"
-check "people zone off: main unchanged" test "$(git -C "$B" rev-parse main)" = "$main_before"
-people_branch() { git -C "$B" for-each-ref --format='%(refname:short)' 'refs/heads/binnacle-run/*'; }
-check "people zone off: the page reverted on the run branch" \
-  expect_fail git -C "$B" cat-file -e "$(people_branch):wiki/people/sample-subject.md"
-check "people zone off: the audit note names the page" bash -c 'b=$2; git -C "$1" show "$b:$(git -C "$1" ls-tree -r --name-only "$b" -- audit/runs | sort | tail -n 1)" | grep -q "wiki/people/sample-subject.md"' _ "$B" "$(people_branch)"
-people_branch | xargs git -C "$B" branch -q -D
-git -C "$B" config binnacle.peopleZone true
-sleep 1
-check "people zone on: the run exits 0" env STUB_CLAUDE_MODE=people STUB_PROMPT="$T/prompt.txt" "$B/bin/binnacle-run"
-check "people zone on: the prompt says on" grep -q 'is \*\*on\*\* in this vault' "$T/prompt.txt"
-check "people zone on: the page reaches main" test -f "$B/wiki/people/sample-subject.md"
-git -C "$B" config --unset binnacle.peopleZone
+  # Local-only runs: no remote, no gh; main is fast-forwarded to the run.
+  : >"$T/gh.log"
+  printf 'A work idea.\n' >"$B/raw/inbox/work-idea.md"
+  git -C "$B" add -A
+  git -C "$B" commit -qm capture
+  brun() { "$B/bin/binnacle-run" "$@" >"$T/brun.out" 2>&1; }
+  check "work-brain run --dry-run: exits 0" brun --dry-run
+  check "work-brain run --dry-run: says local only" grep -q 'local only: no push, no PR' "$T/brun.out"
+  check "work-brain run --dry-run: lists the source" grep -q 'raw/inbox/work-idea.md' "$T/brun.out"
+  main_before=$(git -C "$B" rev-parse main)
+  check "work-brain run: ok run exits 0" env STUB_CLAUDE_MODE=ok "$B/bin/binnacle-run" >"$T/brun.out" 2>&1
+  check "work-brain run: main fast-forwarded" git -C "$B" merge-base --is-ancestor "$main_before" main
+  check "work-brain run: main moved" test "$(git -C "$B" rev-parse main)" != "$main_before"
+  check "work-brain run: source moved on main" bash -c 'ls "$1"/raw/sources/*/work-idea.md' _ "$B"
+  check "work-brain run: wiki page on main" test -f "$B/wiki/concepts/stub-concept.md"
+  check "work-brain run: no run branch left" test -z "$(git -C "$B" branch --list 'binnacle-run/*')"
+  check "work-brain run: no GitHub call" test ! -s "$T/gh.log"
+  check "work-brain run: still no remote" test -z "$(git -C "$B" remote)"
+  check "work-brain run: audit note says local only" bash -c 'grep -q "^- PR: none (local only" "$1"/audit/runs/*.md' _ "$B"
+  check "work-brain run: audit note merged true" bash -c 'grep -q "^merged: true$" "$1"/audit/runs/*.md' _ "$B"
+  printf 'Another work idea.\n' >"$B/raw/inbox/second.md"
+  git -C "$B" add -A
+  git -C "$B" commit -qm capture2
+  main_before=$(git -C "$B" rev-parse main)
+  sleep 1
+  check "work-brain run: Claude failure exits non-zero" expect_fail env STUB_CLAUDE_MODE=crash "$B/bin/binnacle-run"
+  check "work-brain run: failed run leaves main alone" test "$(git -C "$B" rev-parse main)" = "$main_before"
+  check "work-brain run: failed run keeps its branch" test -n "$(git -C "$B" branch --list 'binnacle-run/*')"
+  check "work-brain run: refuses while a run branch waits" expect_fail env STUB_CLAUDE_MODE=ok "$B/bin/binnacle-run"
+  git -C "$B" for-each-ref --format='%(refname:short)' 'refs/heads/binnacle-run/*' | xargs git -C "$B" branch -q -D
+  check "work-brain run: no GitHub call on failure either" test ! -s "$T/gh.log"
+
+  # People zone: wiki/people/ is written only with binnacle.peopleZone true.
+  printf 'A survey note.\n' >"$B/raw/inbox/survey.md"
+  git -C "$B" add -A
+  git -C "$B" commit -qm capture3
+  main_before=$(git -C "$B" rev-parse main)
+  sleep 1
+  check "people zone off: a run writing wiki/people/ fails" \
+    expect_fail env STUB_CLAUDE_MODE=people STUB_PROMPT="$T/prompt.txt" "$B/bin/binnacle-run"
+  check "people zone off: the prompt says off" grep -q 'is \*\*off\*\* in this vault' "$T/prompt.txt"
+  check "people zone off: main unchanged" test "$(git -C "$B" rev-parse main)" = "$main_before"
+  people_branch() { git -C "$B" for-each-ref --format='%(refname:short)' 'refs/heads/binnacle-run/*'; }
+  check "people zone off: the page reverted on the run branch" \
+    expect_fail git -C "$B" cat-file -e "$(people_branch):wiki/people/sample-subject.md"
+  check "people zone off: the audit note names the page" bash -c 'b=$2; git -C "$1" show "$b:$(git -C "$1" ls-tree -r --name-only "$b" -- audit/runs | sort | tail -n 1)" | grep -q "wiki/people/sample-subject.md"' _ "$B" "$(people_branch)"
+  people_branch | xargs git -C "$B" branch -q -D
+  git -C "$B" config binnacle.peopleZone true
+  sleep 1
+  check "people zone on: the run exits 0" env STUB_CLAUDE_MODE=people STUB_PROMPT="$T/prompt.txt" "$B/bin/binnacle-run"
+  check "people zone on: the prompt says on" grep -q 'is \*\*on\*\* in this vault' "$T/prompt.txt"
+  check "people zone on: the page reaches main" test -f "$B/wiki/people/sample-subject.md"
+  git -C "$B" config --unset binnacle.peopleZone
+fi
 
 # Org base permission: warns with the fix, never blocks.
 bp() { env STUB_ORG_PERM="$1" bash -c '. "$2/setup/common/lib.sh"; . "$2/setup/work-brain/lib.sh"; wb_base_permission acme' _ "$1" "$repo" >"$T/bp.out" 2>&1; }
@@ -1155,81 +1184,96 @@ check "app installations: unreadable warns, does not fail" apps FAIL
 check "app installations: unreadable says so and gives the manual check" \
   grep -q 'could not read the app installations of .acme.*check by hand' "$T/apps.out"
 
-# Connecting a remote: explicit, re-checks collisions, then warns on base permission.
-mkdir -p "$T/gh-acme"
-BR=$T/gh-acme/binnacle-acme-engineering-jdoe.git
-git init -q --bare "$BR"
-connect() { env STUB_ORG_PERM=read STUB_ORG_APPS="$T/installations-mixed.json" "$B/setup/work-brain/connect-remote.sh" "$@" >"$T/connect.out" 2>&1; }
-git init -q --bare "$T/gh-acme/wrong-name.git"
-check "connect: refuses a repository with another name" expect_fail connect --url "$T/gh-acme/wrong-name.git"
-check "connect: refuses a public GitHub repository" expect_fail env STUB_REPO_PRIVATE=false \
-  "$B/setup/work-brain/connect-remote.sh" --url https://github.com/acme-engineering/binnacle-acme-engineering-jdoe.git
-FR=$T/gh-foreign/binnacle-acme-engineering-jdoe.git
-git clone -q --bare "$T/remote.git" "$FR"
-check "connect: refuses a repository holding other history" expect_fail connect --url "$FR"
-check "connect: foreign history adds no origin" test -z "$(git -C "$B" remote)"
-check "connect: exits 0" connect --url "$BR"
-check "connect: origin set" test "$(git -C "$B" remote get-url origin)" = "$BR"
-check "connect: main pushed" test "$(git -C "$BR" rev-parse main)" = "$(git -C "$B" rev-parse main)"
-check "connect: leaves local-only mode" expect_fail git -C "$B" config --get binnacle.localOnly
-check "connect: warns on a readable base permission" grep -q "base repository permission is 'read'" "$T/connect.out"
-if command -v jq >/dev/null 2>&1; then
-  check "connect: warns on an app installed on all repositories" grep -q "GitHub App 'ci-bot' is installed on all repositories" "$T/connect.out"
-else
-  printf 'skip   connect: app installation warning (jq not installed)\n'
+if [ "$template_rules" = yes ]; then
+  # Connecting a remote: explicit, re-checks collisions, then warns on base permission.
+  mkdir -p "$T/gh-acme"
+  BR=$T/gh-acme/binnacle-acme-engineering-jdoe.git
+  git init -q --bare "$BR"
+  connect() { env STUB_ORG_PERM=read STUB_ORG_APPS="$T/installations-mixed.json" "$B/setup/work-brain/connect-remote.sh" "$@" >"$T/connect.out" 2>&1; }
+  git init -q --bare "$T/gh-acme/wrong-name.git"
+  check "connect: refuses a repository with another name" expect_fail connect --url "$T/gh-acme/wrong-name.git"
+  check "connect: refuses a public GitHub repository" expect_fail env STUB_REPO_PRIVATE=false \
+    "$B/setup/work-brain/connect-remote.sh" --url https://github.com/acme-engineering/binnacle-acme-engineering-jdoe.git
+  FR=$T/gh-foreign/binnacle-acme-engineering-jdoe.git
+  git clone -q --bare "$T/remote.git" "$FR"
+  check "connect: refuses a repository holding other history" expect_fail connect --url "$FR"
+  check "connect: foreign history adds no origin" test -z "$(git -C "$B" remote)"
+  check "connect: exits 0" connect --url "$BR"
+  check "connect: origin set" test "$(git -C "$B" remote get-url origin)" = "$BR"
+  check "connect: main pushed" test "$(git -C "$BR" rev-parse main)" = "$(git -C "$B" rev-parse main)"
+  check "connect: leaves local-only mode" expect_fail git -C "$B" config --get binnacle.localOnly
+  check "connect: warns on a readable base permission" grep -q "base repository permission is 'read'" "$T/connect.out"
+  if command -v jq >/dev/null 2>&1; then
+    check "connect: warns on an app installed on all repositories" grep -q "GitHub App 'ci-bot' is installed on all repositories" "$T/connect.out"
+  else
+    printf 'skip   connect: app installation warning (jq not installed)\n'
+  fi
+  helper_key=credential.https://github.com.helper
+  check "connect: credential helper empty entry then gh by absolute path" \
+    test "$(git -C "$B" config --local --get-all "$helper_key")" = "$(printf "\n!'%s' auth git-credential" "$BINNACLE_GH")"
+  check "connect: no credential helper in global config" expect_fail git config --global --get-regexp '^credential\.'
+  check "connect: re-run is safe" connect --url "$BR"
+  check "connect: re-run adds no duplicate helper entries" \
+    test "$(git -C "$B" config --local --get-all "$helper_key" | wc -l | tr -d ' ')" = 2
+  # Obsidian on macOS runs git with a minimal PATH: the helper must still find gh.
+  gitbin=$(command -v git)
+  check "connect: credential helper runs under PATH=/usr/bin:/bin" bash -c \
+    'printf "protocol=https\nhost=github.com\n\n" | env PATH=/usr/bin:/bin GIT_TERMINAL_PROMPT=0 "$1" -C "$2" credential fill | grep -q "^password=stub-token$"' \
+    _ "$gitbin" "$B"
+  # The default BINNACLE_GH is the bare name gh: the helper must hold where
+  # PATH found it, quoted, even in a directory with a space.
+  mkdir -p "$T/gh bin"
+  cp "$T/stubs/gh" "$T/gh bin/gh"
+  check "connect: bare gh resolved from PATH" \
+    env PATH="$T/gh bin:$PATH" BINNACLE_GH=gh "$B/setup/work-brain/connect-remote.sh" --url "$BR"
+  check "connect: helper names the resolved gh by quoted absolute path" \
+    test "$(git -C "$B" config --local --get-all "$helper_key" | sed -n 2p)" = "!'$T/gh bin/gh' auth git-credential"
+  check "connect: resolved gh helper runs under PATH=/usr/bin:/bin" bash -c \
+    'printf "protocol=https\nhost=github.com\n\n" | env PATH=/usr/bin:/bin GIT_TERMINAL_PROMPT=0 "$1" -C "$2" credential fill | grep -q "^password=stub-token$"' \
+    _ "$gitbin" "$B"
+  check "connect: refuses when gh is not found" expect_fail env BINNACLE_GH="$T/no-such-gh" \
+    "$B/setup/work-brain/connect-remote.sh" --url "$BR"
+  check "connect: says gh not found" bash -c 'env BINNACLE_GH="$1/no-such-gh" "$2/setup/work-brain/connect-remote.sh" --url "$3" 2>&1 | grep -q "gh not found"' \
+    _ "$T" "$B" "$BR"
+  check "connect: setup re-run accepts the connected origin" wb_setup --org acme-engineering --user jdoe
+  check "connect: refuses a different repository once connected" expect_fail connect --url "$T/gh-acme2/binnacle-acme-engineering-jdoe.git"
+  git -C "$B" remote set-url origin "$T/elsewhere/binnacle-acme-engineering-jdoe.git"
+  check "connect: setup refuses an origin changed by hand" expect_fail wb_setup --org acme-engineering --user jdoe
+  git -C "$B" remote set-url origin "$BR"
+  check "connect: refuses to run in ~/binnacle" expect_fail \
+    env HOME="$WH" "$WH/binnacle/setup/work-brain/connect-remote.sh" --url "$BR"
+  # GitHub owner/repo compare case-insensitively: a mixed-case --url matches the
+  # lowercase origin. Both spellings are rewritten to the local bare repository.
+  check "work-brain: GitHub remote key lowercases owner/repo, drops .git" \
+    test "$(wblib wb_remote_key https://github.com/Acme/Binnacle-X.git/)" = https://github.com/acme/binnacle-x
+  check "work-brain: non-GitHub remote key unchanged" test "$(wblib wb_remote_key /tmp/Repo.git)" = /tmp/Repo.git
+  gh_lower=https://github.com/acme-engineering/binnacle-acme-engineering-jdoe.git
+  gh_mixed=https://github.com/Acme-Engineering/Binnacle-Acme-Engineering-JDoe
+  git config --global url."$BR".insteadOf "$gh_mixed"
+  git config --global url."$BR".pushInsteadOf "$gh_lower"
+  git -C "$B" remote set-url origin "$gh_lower"
+  git -C "$B" config binnacle.remoteUrl "$gh_lower"
+  check "connect: accepts a mixed-case --url for the lowercase origin" connect --url "$gh_mixed"
+  check "connect: records the URL as given" test "$(git -C "$B" config binnacle.remoteUrl)" = "$gh_mixed"
+  check "connect: setup accepts origin and recorded URL differing only in case" wb_setup --org acme-engineering --user jdoe
+  check "connect: still refuses another owner's repository" expect_fail \
+    connect --url https://github.com/Other-Org/binnacle-acme-engineering-jdoe.git
+  check "connect: says origin points elsewhere for another owner" grep -q 'points elsewhere' "$T/connect.out"
+  git config --global --remove-section url."$BR"
+
+  # A work brain with real content runs its own selftest: the sandbox takes
+  # only template files, and what needs a pristine template is skipped.
+  mkdir -p "$B/soundings/work-notes" "$B/docs"
+  printf 'A work note.\n' >"$B/soundings/work-notes/used instances.md"
+  head -c 4096 /dev/zero >"$B/docs/Team handbook.pdf"
+  git -C "$B" add -A
+  git -C "$B" commit -qm "work notes"
+  check "work brain with content: own selftest passes" bash -c '"$1/test/selftest.sh" >"$2" 2>&1' _ "$B" "$T/wbself.out"
+  check "work brain with content: selftest says why it skips the brain setup" \
+    grep -q '^skip   work-brain setup, run and connect' "$T/wbself.out"
+  check "work brain with content: selftest ran the import finish checks" \
+    grep -q '^ok     import finish: lists an oversized file whose name has spaces and quotes' "$T/wbself.out"
 fi
-helper_key=credential.https://github.com.helper
-check "connect: credential helper empty entry then gh by absolute path" \
-  test "$(git -C "$B" config --local --get-all "$helper_key")" = "$(printf "\n!'%s' auth git-credential" "$BINNACLE_GH")"
-check "connect: no credential helper in global config" expect_fail git config --global --get-regexp '^credential\.'
-check "connect: re-run is safe" connect --url "$BR"
-check "connect: re-run adds no duplicate helper entries" \
-  test "$(git -C "$B" config --local --get-all "$helper_key" | wc -l | tr -d ' ')" = 2
-# Obsidian on macOS runs git with a minimal PATH: the helper must still find gh.
-gitbin=$(command -v git)
-check "connect: credential helper runs under PATH=/usr/bin:/bin" bash -c \
-  'printf "protocol=https\nhost=github.com\n\n" | env PATH=/usr/bin:/bin GIT_TERMINAL_PROMPT=0 "$1" -C "$2" credential fill | grep -q "^password=stub-token$"' \
-  _ "$gitbin" "$B"
-# The default BINNACLE_GH is the bare name gh: the helper must hold where
-# PATH found it, quoted, even in a directory with a space.
-mkdir -p "$T/gh bin"
-cp "$T/stubs/gh" "$T/gh bin/gh"
-check "connect: bare gh resolved from PATH" \
-  env PATH="$T/gh bin:$PATH" BINNACLE_GH=gh "$B/setup/work-brain/connect-remote.sh" --url "$BR"
-check "connect: helper names the resolved gh by quoted absolute path" \
-  test "$(git -C "$B" config --local --get-all "$helper_key" | sed -n 2p)" = "!'$T/gh bin/gh' auth git-credential"
-check "connect: resolved gh helper runs under PATH=/usr/bin:/bin" bash -c \
-  'printf "protocol=https\nhost=github.com\n\n" | env PATH=/usr/bin:/bin GIT_TERMINAL_PROMPT=0 "$1" -C "$2" credential fill | grep -q "^password=stub-token$"' \
-  _ "$gitbin" "$B"
-check "connect: refuses when gh is not found" expect_fail env BINNACLE_GH="$T/no-such-gh" \
-  "$B/setup/work-brain/connect-remote.sh" --url "$BR"
-check "connect: says gh not found" bash -c 'env BINNACLE_GH="$1/no-such-gh" "$2/setup/work-brain/connect-remote.sh" --url "$3" 2>&1 | grep -q "gh not found"' \
-  _ "$T" "$B" "$BR"
-check "connect: setup re-run accepts the connected origin" wb_setup --org acme-engineering --user jdoe
-check "connect: refuses a different repository once connected" expect_fail connect --url "$T/gh-acme2/binnacle-acme-engineering-jdoe.git"
-git -C "$B" remote set-url origin "$T/elsewhere/binnacle-acme-engineering-jdoe.git"
-check "connect: setup refuses an origin changed by hand" expect_fail wb_setup --org acme-engineering --user jdoe
-git -C "$B" remote set-url origin "$BR"
-check "connect: refuses to run in ~/binnacle" expect_fail \
-  env HOME="$WH" "$WH/binnacle/setup/work-brain/connect-remote.sh" --url "$BR"
-# GitHub owner/repo compare case-insensitively: a mixed-case --url matches the
-# lowercase origin. Both spellings are rewritten to the local bare repository.
-check "work-brain: GitHub remote key lowercases owner/repo, drops .git" \
-  test "$(wblib wb_remote_key https://github.com/Acme/Binnacle-X.git/)" = https://github.com/acme/binnacle-x
-check "work-brain: non-GitHub remote key unchanged" test "$(wblib wb_remote_key /tmp/Repo.git)" = /tmp/Repo.git
-gh_lower=https://github.com/acme-engineering/binnacle-acme-engineering-jdoe.git
-gh_mixed=https://github.com/Acme-Engineering/Binnacle-Acme-Engineering-JDoe
-git config --global url."$BR".insteadOf "$gh_mixed"
-git config --global url."$BR".pushInsteadOf "$gh_lower"
-git -C "$B" remote set-url origin "$gh_lower"
-git -C "$B" config binnacle.remoteUrl "$gh_lower"
-check "connect: accepts a mixed-case --url for the lowercase origin" connect --url "$gh_mixed"
-check "connect: records the URL as given" test "$(git -C "$B" config binnacle.remoteUrl)" = "$gh_mixed"
-check "connect: setup accepts origin and recorded URL differing only in case" wb_setup --org acme-engineering --user jdoe
-check "connect: still refuses another owner's repository" expect_fail \
-  connect --url https://github.com/Other-Org/binnacle-acme-engineering-jdoe.git
-check "connect: says origin points elsewhere for another owner" grep -q 'points elsewhere' "$T/connect.out"
-git config --global --remove-section url."$BR"
 check "work-brain: personal ~/binnacle untouched" test "$(personal_sum)" = "$personal_before"
 
 printf '\n%s passed, %s failed\n' "$passed" "$failed"
