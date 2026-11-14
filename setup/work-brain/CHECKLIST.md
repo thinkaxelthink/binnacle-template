@@ -159,13 +159,19 @@ repositories (GitHub Team or Enterprise).
       `acme-engineering/binnacle-acme-engineering-jdoe`: no README,
       license or `.gitignore`. Add no collaborators or teams.
 - [ ] **[browser, human]** Create a fine-grained token: resource owner
-      `acme-engineering`, only this repository, Contents and Pull requests
-      read and write, with an expiry (the organization may need to approve
-      it). Never a classic token. Store it for `gh`, which
+      `acme-engineering`, only this repository, Contents, Pull requests and
+      Workflows read and write, with an expiry (the organization may need
+      to approve it). Never a classic token. Store it for `gh`, which
       `bin/binnacle-run` uses:
       `security add-generic-password -U -s binnacle-acme-engineering-jdoe-gh-token -a "$USER" -w`.
-      Git asks for it on the first push (username: your GitHub login;
-      password: the token) and keeps it in the keychain.
+- [ ] **[work machine, human]** Log `gh` in with the `workflow` scope
+      before the first push: `gh auth login -s workflow` (or, already
+      logged in, `gh auth refresh -s workflow`); `gh auth status` lists
+      `workflow` under the token scopes. The first push carries the
+      `secret-scan` workflow (`.github/workflows/`), and GitHub refuses it
+      from a login without that scope. If you log `gh` in with a
+      fine-grained token instead (`gh auth login --with-token`), it needs
+      the Workflows permission, as above.
 - [ ] **[work machine, human]** Connect:
 
       ```sh
@@ -178,7 +184,27 @@ repositories (GitHub Team or Enterprise).
       when `gh` can see it), adds `origin`, pushes `main`, unsets
       `binnacle.localOnly`, then checks the base permission and the app
       installations. `--url` picks
-      another address for the same repository name.
+      another address for the same repository name; GitHub owner and
+      repository names are compared case-insensitively, as GitHub does.
+
+      It also sets this vault's git credential helper for
+      `https://github.com` (vault-local, never `--global`) to `gh` by its
+      absolute path, found when the script runs, after an empty entry
+      that drops any helpers inherited from your global config:
+
+      ```sh
+      git config --local --get-all credential.https://github.com.helper
+      # (empty line)
+      # !/opt/homebrew/bin/gh auth git-credential
+      ```
+
+      Obsidian on macOS starts with a minimal `PATH` (`/usr/bin:/bin`),
+      so a bare `!gh auth git-credential` is not found there and Obsidian
+      Git falls back to asking for a username. To check that the helper
+      works without your shell's `PATH`:
+      `PATH=/usr/bin:/bin GIT_TERMINAL_PROMPT=0 git -C ~/binnacle-acme-engineering-jdoe ls-remote origin`
+      must list `main` without a prompt. If you move or reinstall `gh`,
+      re-run `connect-remote.sh`.
 - [ ] **[browser, human]** In the repository: Actions shows the
       `secret-scan` workflow ran with a job named `gitleaks`. Settings >
       General: allow auto-merge, allow squash merging, automatically delete

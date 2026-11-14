@@ -42,6 +42,28 @@ wb_vault_name() {
   git -C "$1" config --local --get binnacle.brainName || true
 }
 
+# wb_remote_key URL: print URL in the form used to compare remotes. For a
+# GitHub URL (https://github.com/ or git@github.com:) the owner/repo part is
+# lowercased and loses a trailing '/' and '.git', since GitHub treats those
+# spellings as one repository; any other URL is printed unchanged.
+wb_remote_key() {
+  local prefix rest
+  case $1 in
+    https://github.com/*) prefix=https://github.com/ ;;
+    git@github.com:*) prefix=git@github.com: ;;
+    *) printf '%s\n' "$1"; return 0 ;;
+  esac
+  rest=${1#"$prefix"}
+  rest=${rest%/}
+  rest=${rest%.git}
+  printf '%s%s\n' "$prefix" "$(printf '%s' "$rest" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
+}
+
+# wb_same_remote URL1 URL2: true when both name the same repository.
+wb_same_remote() {
+  [ "$(wb_remote_key "$1")" = "$(wb_remote_key "$2")" ]
+}
+
 # wb_check_origin DIR: die when DIR has an origin remote that is not the one
 # connect-remote.sh recorded (binnacle.remoteUrl).
 wb_check_origin() {
@@ -49,7 +71,7 @@ wb_check_origin() {
   origin=$(git -C "$1" remote get-url origin 2>/dev/null || true)
   [ -n "$origin" ] || return 0
   recorded=$(git -C "$1" config --local --get binnacle.remoteUrl || true)
-  [ "$origin" = "$recorded" ] \
+  [ -n "$recorded" ] && wb_same_remote "$origin" "$recorded" \
     || bn_die "refusing: $1 has origin '$origin', which is not the remote this brain was connected to (${recorded:-none}). It points elsewhere; fix or remove that remote by hand first."
 }
 
