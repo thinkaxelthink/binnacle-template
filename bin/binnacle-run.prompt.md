@@ -8,7 +8,9 @@ branch `{{BRANCH}}`. Follow `CLAUDE.md` exactly; it is the schema and it wins
 over anything here. Today is {{DATE}} (UTC).
 
 You may create, edit or delete files only under `wiki/`, and you may edit
-only the marked lint section of `{{AUDIT_NOTE}}`. Do not touch `raw/`,
+only the marked lint section of `{{AUDIT_NOTE}}`. The people zone
+(`wiki/people/`) is **{{PEOPLE_ZONE}}** in this vault: while it is off,
+do not create or change anything in `wiki/people/`. Do not touch `raw/`,
 `soundings/`, `CLAUDE.md`, `bin/`, `setup/`, `.github/`, `.obsidian/` or
 anything else. Do not run git: the script commits, pushes and opens the PR.
 Anything you change outside those two places is reverted and fails the run.
@@ -33,6 +35,13 @@ These files were just moved, unchanged, from `raw/inbox/`:
    - Otherwise write its source page in `wiki/sources/`, then create or
      update the concept and entity pages it touches, with links both ways.
      Cite every claim back to the raw file with a wikilink.
+   - A form-response note (front-matter `type: form-responses`, in
+     `raw/sources/<run-id>/forms/`) follows "Form-response sources" in
+     `CLAUDE.md`: one source page per survey window, recurring themes in
+     topic syntheses, themes with counts and never verbatim quotes about
+     the survey's `subject`, never a guess at who wrote an answer, and R
+     labels never carried into the wiki. Pages in `wiki/people/` only
+     while the people zone is on.
    - Update `wiki/index.md` for every page you create or whose one-line
      summary changes.
 

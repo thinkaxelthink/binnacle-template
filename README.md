@@ -5,9 +5,13 @@ vault that an LLM keeps as a wiki, after Andrej Karpathy's "LLM Wiki" gist.
 This repository is public and holds no content. The private vault repo,
 `binnacle`, is created from it, and lives at `~/binnacle` on each Mac.
 
-Scope is personal: thoughts and architectural learnings. No company data;
-no member, payment, contract or credential material; no company system
-connects to it.
+Scope depends on the profile. The personal vault holds thoughts and
+architectural learnings: no company data; no member, payment, contract or
+credential material; no company system connects to it. A work brain
+(below) holds one employer's company material, within limits: never
+customer or member personal data, payment data, minors' names, health or
+waiver records, or credentials, and the only company system that may feed
+it is the owner's own Microsoft Forms flow, through the survey scrub.
 
 ## How it works
 
@@ -127,6 +131,21 @@ and the organization's owners (who can always read it). The setup refuses
 colliding folders and remotes and never touches `~/binnacle`; the personal
 vault and its setup are unchanged. Steps: `setup/work-brain/CHECKLIST.md`.
 
+## Survey intake
+
+`bin/binnacle-forms-to-inbox` turns a survey's responses export
+(Microsoft Forms xlsx or csv, Google Forms or Sheets csv) into one
+scrubbed note per form per collection window in `raw/inbox/forms/`:
+respondent names, emails, ids and timestamps dropped, ratings summarised,
+free-text answers labelled R1..Rn in a random order, and nothing written
+at all when an answer matches an email, phone or card pattern or a local
+stop-list. It never commits. In a work brain, a Power Automate flow and
+`setup/forms/mover.sh` feed it from Microsoft Forms
+(`setup/forms/CHECKLIST.md`); in the personal vault, run it on a Google
+Forms export by hand. `CLAUDE.md` says how such notes are ingested,
+including the optional `wiki/people/` zone for a manager's surveys about
+direct reports (off unless `git config binnacle.peopleZone true`).
+
 ## Self-test
 
 ```sh
@@ -142,8 +161,10 @@ auto-merge), plus `bin/binnacle-nightly` and `setup/shoyu/nightly.sh`
 (stubbed `binnacle-run` and `launchctl`), and the work-brain profile
 (name slugging, collision refusals, local-only setup and runs, connecting
 a remote, the base-permission and app-installation checks with a stubbed
-`gh`), against throwaway repositories. CI runs it on changes to scripts
-(`.github/workflows/selftest.yml`).
+`gh`), the survey converter and mover (csv and xlsx exports of both
+platforms, the scrub, refusals, ratings, the R1..Rn shuffle, re-runs) and
+the people-zone guard, against throwaway repositories. CI runs it on
+changes to scripts (`.github/workflows/selftest.yml`).
 
 ## Roadmap
 

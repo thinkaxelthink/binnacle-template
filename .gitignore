@@ -20,6 +20,11 @@
 # Obsidian's local trash.
 .trash/
 
+# --- Survey intake -------------------------------------------------------------
+# Local only, never committed: the forms stop-list (names and other terms to
+# refuse) and per-form settings (setup/forms/CHECKLIST.md).
+.binnacle/
+
 # --- Claude Code -------------------------------------------------------------
 .claude/settings.local.json
 

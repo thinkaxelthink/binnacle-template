@@ -130,7 +130,12 @@ contract material, or credentials, and no company system connects to it." \
 employer, kept in a private repository in that employer's GitHub
 organization. Company material may go in, within these limits: never
 customer or member personal data, payment data, minors' names, health or
-waiver records, or credentials. No company system connects to the vault.
+waiver records, or credentials. Survey responses may cover HR topics when
+the owner is the manager running the survey. No company system connects to
+the vault, with one exception: the owner's own Microsoft Forms flow may
+feed \`raw/inbox/forms/\`, and only through the scrub in
+\`bin/binnacle-forms-to-inbox\`, which runs before anything is committed
+(\`setup/forms/CHECKLIST.md\`).
 
 Until a remote is connected (\`git config binnacle.localOnly true\`),
 everything stays on this machine: where this file says a PR is opened and
