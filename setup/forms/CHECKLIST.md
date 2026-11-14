@@ -15,6 +15,13 @@ folder `team-pulse`; use your own.
 
 ## The vault rule change
 
+The scrub exists to keep personal contact details out of the vault and
+away from the agent that reads it.
+The intake is for feedback and survey forms only. Order, sign-up and
+registration forms are out of scope: they exist to collect contact
+details, which the scrub keeps out of the vault, and their records belong
+in a spreadsheet or order tool rather than in notes an agent reads.
+
 A work brain's rule is that no company system connects to it. This adds
 exactly one exception: **your own Microsoft Forms flow may feed
 `raw/inbox/forms/`, and only through the converter's scrub, which runs
@@ -124,6 +131,12 @@ policies (HR, privacy, retention); they win over this checklist.
       dates like `05/11/2026`; the converter refuses such dates when no
       day or month in them is over 12 and neither is set; it never
       guesses.
+      `invited=` is how many people you sent the form to. You type it
+      yourself, because Forms cannot count invitations, and it is
+      optional. When set, the note reads "N respondents of M invited",
+      and the mover refuses the form when the responses outnumber it (a
+      duplicate answer, or a stray response from another form). When
+      absent, that check is skipped and the note gives no invited count.
 - [ ] **[work machine, human]** Write the stop-list,
       `~/binnacle-acme-engineering-jdoe/.binnacle/forms-stoplist`: one term
       per line (`#` starts a comment), matched as whole words, any case.
@@ -168,7 +181,8 @@ has closed.
       Git, or `git add raw/inbox/forms` and `git commit`); the pre-commit
       secret scan runs. Then `bin/binnacle-run` as usual.
 - [ ] **[work machine, human]** Before the next window, set its `from=`
-      and `to=` in the form's `.conf`. The mover refuses a new window while
+      and `to=` in the form's `.conf`, and update `invited=` if the group
+      changed. The mover refuses a new window while
       the last window's note is still in `raw/inbox/forms/`, and refuses
       any window that overlaps one whose note has been ingested (it keeps
       the list in `processed/<form>/.windows`), so windows never mix; once
