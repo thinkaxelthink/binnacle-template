@@ -51,8 +51,14 @@ policies (HR, privacy, retention); they win over this checklist.
       `Binnacle forms/team-pulse`. Share it with no one.
 - [ ] **[browser, human]** Power Automate > Create > Automated cloud
       flow, trigger **When a new response is submitted** (Microsoft
-      Forms), Form Id: your form. Then add, in order:
-  1. **Get response details** (Microsoft Forms): Form Id: the same form;
+      Forms), Form Id: pick your form from the dropdown (that stores its
+      internal id), or choose Enter custom value and paste the long `id=`
+      value from the address bar of the form's edit page. Not the form's
+      title (the run fails with BadRequest "Invalid form id"), and not the
+      short `forms.office.com/r/` share link, which holds no id. Then add,
+      in order:
+  1. **Get response details** (Microsoft Forms): Form Id: the same form,
+     chosen the same way;
      Response Id: the trigger's Response Id. If Power Automate wraps it in
      an "Apply to each", put the next two actions inside that too.
   2. **Create CSV table** (Data Operation): From: the expression
@@ -70,7 +76,8 @@ policies (HR, privacy, retention); they win over this checklist.
      table.
 - [ ] **[browser, human]** Save, submit one test response, and check that
       one `.csv` file appears in the folder. Delete the test file and the
-      test response.
+      test response. A failed run does not retry: after a fix, submit a
+      new response.
 
 ## The work machine
 
@@ -93,7 +100,7 @@ policies (HR, privacy, retention); they win over this checklist.
 
       ```
       form_title=Team pulse
-      form_id=<the id=... value from the form's link; only its hash reaches the vault>
+      form_id=<the same id as the flow's Form Id: the long id=... value from the form's edit-page address bar, not the short share link; only its hash reaches the vault>
       audience=Platform team
       consent_notice_version=v1
       from=2026-11-02
