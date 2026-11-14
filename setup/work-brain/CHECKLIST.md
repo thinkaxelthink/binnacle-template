@@ -253,9 +253,9 @@ step. Your notes and the wiki are never touched.
       one and the files you updated are listed as edited: do not undo
       them; record the template commit you updated to
       (`git config binnacle.templateBase <commit>`) and re-run. Otherwise
-      it copies what changed upstream since then (new, changed, deleted and renamed
-      files), re-applies the company scope rules to `CLAUDE.md` and the run
-      prompt, and commits on a `binnacle-update/<id>` branch through the
+      it copies what changed upstream since then (new, changed, deleted
+      and renamed files), re-applies the company scope rules to `CLAUDE.md`
+      and the run prompt, and commits on a `binnacle-update/<id>` branch through the
       pre-commit scan. `wiki/`, `raw/`, `soundings/` and `audit/` are never
       touched: an upstream change there is listed for you to copy by hand.
 - [ ] **[work machine, human]** Local only, `main` is fast-forwarded and
