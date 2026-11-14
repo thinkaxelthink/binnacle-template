@@ -207,7 +207,7 @@ if [ "$files" -gt 0 ]; then
     | awk '{ s += $1 } END { printf "%d", s }')
 fi
 types_changed=$(g diff --name-only "$base_ref...HEAD" -- "$TYPES")
-deleted=$(g diff --name-only --diff-filter=D "$base_ref...HEAD" -- "$ZONE" | wc -l | tr -d ' ')
+deleted=$(g diff -z --name-only --diff-filter=D "$base_ref...HEAD" -- "$ZONE" | tr -cd '\0' | wc -c | tr -d ' ')
 mib=$(awk -v b="$bytes" 'BEGIN { printf "%.1f", b / 1048576 }')
 
 # 5. GitHub token, never printed (same sources as bin/binnacle-run).

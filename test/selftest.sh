@@ -48,7 +48,13 @@ git config --global init.defaultBranch main
 git config --global advice.detachedHead false
 
 mkdir -p "$T/seed" "$T/stubs"
-(cd "$repo" && git ls-files -z -co --exclude-standard | tar --null -T - -cf -) | tar -xf - -C "$T/seed"
+# Seed only the files the template itself ships, so a run inside a vault
+# never pulls its notes, docs or tracked .obsidian/ settings into fixtures.
+template_paths=(.githooks .github .gitignore .gitleaks.toml .shellcheckrc CLAUDE.md README.md
+  audit/README.md audit/runs.base audit/runs/.gitkeep bin raw/inbox/.gitkeep setup
+  soundings/.gitkeep test wiki/index.md wiki/log.md)
+(cd "$repo" && git ls-files -z -co --exclude-standard -- "${template_paths[@]}" | tar --null -T - -cf -) \
+  | tar -xf - -C "$T/seed"
 git -C "$T/seed" init -q
 git -C "$T/seed" add -A
 git -C "$T/seed" commit -qm seed
@@ -383,12 +389,16 @@ check "import finish: neighbour refusal commits nothing" test "$(git -C "$V" rev
 rm -f "$V/.obsidian/app.json"
 
 head -c 2048 /dev/zero >"$V/soundings/notion/Slip box/attachments/huge.bin"
+head -c 3072 /dev/zero >"$V/soundings/notion/Slip box/attachments/used instances's \"scan\".pdf"
 check "import finish: stops on a file over the cap" expect_fail env BINNACLE_MAX_FILE_BYTES=1024 \
   BINNACLE_DIR="$V" "$repo/bin/binnacle-import" finish
 BINNACLE_MAX_FILE_BYTES=1024 BINNACLE_DIR="$V" "$repo/bin/binnacle-import" finish >"$T/imp.out" 2>&1 || true
 check "import finish: lists the oversized file" grep -q 'attachments/huge.bin (2048 bytes)' "$T/imp.out"
+check "import finish: lists an oversized file whose name has spaces and quotes" \
+  grep -qF 'attachments/used instances'"'"'s "scan".pdf (3072 bytes)' "$T/imp.out"
 check "import finish: size stop commits nothing" test "$(git -C "$V" rev-list --count origin/main..HEAD)" = 0
-rm -f "$V/soundings/notion/Slip box/attachments/huge.bin"
+rm -f "$V/soundings/notion/Slip box/attachments/huge.bin" \
+  "$V/soundings/notion/Slip box/attachments/used instances's \"scan\".pdf"
 
 check "import finish: hook failure stops" expect_fail env BINNACLE_GITLEAKS="$T/stubs/gitleaks-fail" \
   BINNACLE_DIR="$V" "$repo/bin/binnacle-import" finish
@@ -976,8 +986,12 @@ WH=$T/wbhome
 mkdir -p "$WH"
 git clone -q "$T/remote.git" "$WH/binnacle"
 printf 'personal note\n' >"$WH/binnacle/soundings/mine.md"
-personal_sum() { (cd "$WH/binnacle" && find . -path ./.git/index -prune -o -type f -print | LC_ALL=C sort | xargs cksum); }
+printf 'spaced note\n' >"$WH/binnacle/soundings/used instances.md"
+printf 'quoted note\n' >"$WH/binnacle/soundings/it's a \"note\".md"
+personal_sum() { (cd "$WH/binnacle" && find . -path ./.git/index -prune -o -type f -print0 | LC_ALL=C sort -z | xargs -0 cksum); }
 personal_before=$(personal_sum)
+check "work-brain: personal checksum covers names with spaces and quotes" \
+  bash -c 'grep -qF "used instances.md" <<<"$1" && grep -qF "it'"'"'s a \"note\".md" <<<"$1"' _ "$personal_before"
 wblib() { bash -c '. "$1/setup/common/lib.sh"; . "$1/setup/work-brain/lib.sh"; shift; "$@"' _ "$repo" "$@"; }
 check "work-brain: slug lowercases and joins words" test "$(wblib wb_slug 'Acme Engineering')" = acme-engineering
 check "work-brain: slug squeezes runs and trims dashes" test "$(wblib wb_slug '--ACME__Eng!!--')" = acme-eng
