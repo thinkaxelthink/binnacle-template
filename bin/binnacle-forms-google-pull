@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# binnacle-forms-google-pull: pull your own Google Forms' responses into
+# raw/inbox/forms/, one scrubbed note per form per collection window, through
+# bin/binnacle-forms-to-inbox. For the personal vault.
+#
+# Usage: bin/binnacle-forms-google-pull [--vault DIR] [FORM...]
+#        bin/binnacle-forms-google-pull [--vault DIR] --consent
+#
+#   FORM       the forms to pull, by settings file name:
+#              <vault>/.binnacle/forms-google/<FORM>.conf (default: every one)
+#   --consent  once, interactive: open Google's consent page for your own
+#              Desktop app OAuth client and save the refresh token it grants
+#   --vault    default: the vault this script belongs to
+#
+#   Access is read-only, with exactly two scopes, forms.body.readonly and
+#   forms.responses.readonly, through your own Google Cloud Desktop app
+#   client (setup/forms/GOOGLE-CHECKLIST.md). It uses two files, each
+#   outside the vault and owned by you with mode 600 (or 400): the client
+#   file Google gave you (git config binnacle.googleClientFile, default
+#   ~/.config/binnacle/google-oauth-client.json) and the refresh token that
+#   --consent writes (git config binnacle.googleTokenFile, default
+#   ~/.config/binnacle/google-forms-token.json). A pull refuses, before any
+#   network call, when either is missing, a symlink, inside the vault, or
+#   open to anyone else. No token is ever printed or logged; the access
+#   token lives in memory only.
+#
+#   Each form's settings are key=value lines (parsed, never sourced) in the
+#   gitignored <vault>/.binnacle/forms-google/<FORM>.conf: form_title,
+#   form_id (the id in the form's edit link, /forms/d/<id>/edit, or that
+#   link; only its hash reaches the vault), audience,
+#   consent_notice_version, from and to (the window, YYYY-MM-DD) (all
+#   required), and subject, identity, invited, tz (an IANA time zone,
+#   e.g. America/New_York; default: this machine's).
+#
+#   A window is inclusive local dates, and each response is dated by when
+#   it was first submitted, in tz. Per form:
+#     - while the window is open (today, in tz, is on or before to),
+#       nothing is fetched or written;
+#     - once it has closed, the form and all its responses are fetched.
+#       The form is refused, nothing written, when a response is dated
+#       outside this window and every earlier one. Otherwise the window's
+#       responses go, as a csv in a private temporary folder outside the
+#       vault (deleted afterwards), to bin/binnacle-forms-to-inbox
+#       --within-window, which scrubs them and writes the window's one
+#       note, raw/inbox/forms/form-<hash>-<from>-to-<to>.md, or refuses
+#       and writes nothing;
+#     - run again while that note is still in raw/inbox/forms/ and not
+#       yet committed: when the window's responses, the form or the
+#       settings changed, the whole note is rebuilt; otherwise it is left
+#       as it is. Once git tracks the note (committed, waiting for ingest),
+#       it and the form's state are left as they are and nothing is
+#       fetched (exit 0), whatever from/to now say;
+#     - once the note has left raw/inbox/forms/ (ingested), the window is
+#       done: set from= and to= for the next one, which is picked up
+#       on the first pull after that note has been ingested.
+#   While the note waits uncommitted, from/to may change only to a window
+#   that contains the old one (the note is rebuilt under the wider window
+#   and the old-named note removed). A window that overlaps one whose note has
+#   left the inbox is refused. State per form: <vault>/.binnacle/
+#   forms-google-state/<FORM>/ (.windows, .note). Nothing is committed.
+#
+#   Exit 0 when every form was pulled or had nothing to do; 1 when a form
+#   was refused or failed (the other forms still run) or the credentials
+#   are refused; 2 on bad options. Needs python3 (standard library only).
+#
+# Env: BINNACLE_PYTHON (python3); BINNACLE_BROWSER (the command --consent
+#      opens the link with; default: open on macOS, else it prints it only);
+#      BINNACLE_GOOGLE_HTTP (tests only: a command that answers in place of
+#      Google, so no network is used).
+set -eu
+
+usage() { sed -n '2,/^set -eu/p' "$0" | sed '$d; s/^# \{0,1\}//'; }
+
+case "${1:-}" in
+  -h | --help) usage; exit 0 ;;
+esac
+
+PY=${BINNACLE_PYTHON:-python3}
+here=$(cd "$(dirname "$0")" && pwd -P)
+command -v "$PY" >/dev/null 2>&1 || {
+  printf 'binnacle-forms-google-pull: error: %s not found\n' "$PY" >&2
+  exit 1
+}
+# -I: ignore PYTHON* variables, user site-packages and the current folder.
+exec "$PY" -I "$here/binnacle-forms-google-pull.py" "$@"

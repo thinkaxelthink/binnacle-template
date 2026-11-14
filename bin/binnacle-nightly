@@ -8,12 +8,20 @@
 #     - sets a minimal, explicit PATH: ~/.local/bin (claude, gitleaks),
 #       Homebrew (/usr/local/bin on Intel, /opt/homebrew/bin) for git and gh,
 #       then the system directories;
+#     - when the vault opts in (git config binnacle.googleFormsPull true;
+#       off by default), first runs bin/binnacle-forms-google-pull, which
+#       writes notes for closed Google Forms windows into raw/inbox/forms/
+#       (setup/forms/GOOGLE-CHECKLIST.md). Its output and exit status go to
+#       the log; a failed pull does not stop the run;
 #     - runs bin/binnacle-run once from the vault clone it lives in;
 #     - appends the run's output, with start and end time and exit status,
 #       to ~/Library/Logs/binnacle/nightly.log. A log over 1 MB is first
 #       moved to nightly.log.1 (replacing the previous one). Anything shaped
-#       like a GitHub or Anthropic token is masked before it is written.
-#   It exits with bin/binnacle-run's status. Nothing retries: a failed run
+#       like a GitHub, Anthropic or Google token is masked before it is
+#       written.
+#   It exits with bin/binnacle-run's status, or, when the run succeeded and
+#   the pull failed, the pull's (the end line then says "forms pull
+#   failed"). Nothing retries: a failed run
 #   leaves its PR open, and later runs refuse until it is merged or closed.
 #   Runs skipped for an import in progress, an overlapping run or an empty
 #   inbox exit 0.
@@ -38,11 +46,15 @@ fi
 
 stamp() { date '+%Y-%m-%d %H:%M:%S %z'; }
 # Mask token-shaped strings: GitHub (ghp_, gho_, ghu_, ghs_, ghr_,
-# github_pat_) and Anthropic (sk-ant-).
+# github_pat_), Anthropic (sk-ant-) and Google (ya29. access tokens, 1//
+# refresh tokens, GOCSPX- client secrets).
 redact() {
   LC_ALL=C sed -E \
     -e 's/(gh[pousr]_|github_pat_)[A-Za-z0-9_]+/\1[redacted]/g' \
-    -e 's/sk-ant-[A-Za-z0-9_-]+/sk-ant-[redacted]/g'
+    -e 's/sk-ant-[A-Za-z0-9_-]+/sk-ant-[redacted]/g' \
+    -e 's/ya29\.[A-Za-z0-9._-]+/ya29.[redacted]/g' \
+    -e 's#1//[A-Za-z0-9_-]{8,}#1//[redacted]#g' \
+    -e 's/GOCSPX-[A-Za-z0-9_-]+/GOCSPX-[redacted]/g'
 }
 
 start=$(date +%s)
@@ -50,6 +62,20 @@ start=$(date +%s)
   printf '\n=== %s binnacle-nightly start (pid %s)\n' "$(stamp)" "$$"
   printf 'vault: %s\nPATH:  %s\n' "$vault" "$PATH"
 } >>"$log"
+
+pull=$here/binnacle-forms-google-pull
+pull_status=0
+if [ "$(git -C "$vault" config --get binnacle.googleFormsPull 2>/dev/null || true)" = true ]; then
+  printf -- '--- %s forms pull start\n' "$(stamp)" >>"$log"
+  if [ ! -x "$pull" ]; then
+    pull_status=127
+    printf 'binnacle-nightly: %s not found or not executable\n' "$pull" >>"$log"
+  else
+    (cd "$vault" && "$pull" </dev/null 2>&1) | redact >>"$log"
+    pull_status=${PIPESTATUS[0]}
+  fi
+  printf -- '--- %s forms pull end: exit %s\n' "$(stamp)" "$pull_status" >>"$log"
+fi
 
 if [ ! -x "$run" ]; then
   status=127
@@ -59,5 +85,10 @@ else
   status=${PIPESTATUS[0]}
 fi
 
-printf '=== %s binnacle-nightly end: exit %s (%ss)\n' "$(stamp)" "$status" "$(($(date +%s) - start))" >>"$log"
+pull_note=""
+if [ "$pull_status" -ne 0 ]; then
+  pull_note="; forms pull failed (exit $pull_status)"
+  [ "$status" -ne 0 ] || status=$pull_status
+fi
+printf '=== %s binnacle-nightly end: exit %s (%ss)%s\n' "$(stamp)" "$status" "$(($(date +%s) - start))" "$pull_note" >>"$log"
 exit "$status"

@@ -26,7 +26,7 @@ check() { # description, command...
 scripts=(.githooks/pre-commit bin/binnacle-run bin/binnacle-import bin/binnacle-nightly setup/common/lib.sh
   setup/common/install-hooks.sh setup/github/setup.sh setup/shoyu/setup.sh setup/shoyu/nightly.sh
   setup/workmac/setup.sh setup/work-brain/lib.sh setup/work-brain/setup.sh setup/work-brain/connect-remote.sh
-  setup/work-brain/update.sh bin/binnacle-forms-to-inbox setup/forms/mover.sh test/selftest.sh)
+  setup/work-brain/update.sh bin/binnacle-forms-to-inbox bin/binnacle-forms-google-pull setup/forms/mover.sh test/selftest.sh)
 
 # --- static checks -------------------------------------------------------------
 for s in "${scripts[@]}"; do
@@ -37,8 +37,9 @@ if command -v shellcheck >/dev/null 2>&1; then
 else
   printf 'skip   shellcheck (not installed)\n'
 fi
-check "python parses bin/binnacle-forms-to-inbox.py" \
-  python3 -I -c 'import ast, sys; ast.parse(open(sys.argv[1]).read())' "$repo/bin/binnacle-forms-to-inbox.py"
+for p in bin/binnacle-forms-to-inbox.py bin/binnacle-forms-google-pull.py; do
+  check "python parses $p" python3 -I -c 'import ast, sys; ast.parse(open(sys.argv[1]).read())' "$repo/$p"
+done
 
 # --- fixture: seed repo -> bare remote -> vault clone ----------------------------
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$T/gitconfig"
@@ -586,6 +587,32 @@ dd if=/dev/zero bs=1024 count=1100 2>/dev/null | tr '\0' 'x' >>"$nlog"
 nightly
 check "nightly: log over 1 MB moved to nightly.log.1" test "$(wc -c <"$nlog.1" | tr -d ' ')" -gt 1048576
 check "nightly: fresh log after rotation" test "$(grep -c 'binnacle-nightly start' "$nlog")" = 1
+cat >"$NW/bin/binnacle-forms-google-pull" <<'EOF'
+#!/bin/sh
+echo "stub-pull cwd=$(pwd -P)"
+echo "stub-pull token ya29.a0AfB_pullsecret refresh 1//0gPULLSECRET0123 client GOCSPX-pullsecret"
+echo pull >>"$NIGHTLY_CALLS"
+exit "${STUB_PULL_STATUS:-0}"
+EOF
+chmod +x "$NW/bin/binnacle-forms-google-pull"
+calls() { tr '\n' ' ' <"$T/nightly.calls"; }
+nightly
+check "nightly: forms pull off by default" bash -c 'test "$(tr "\n" " " <"$1")" = "x " && ! grep -q "forms pull" "$2"' _ "$T/nightly.calls" "$nlog"
+git init -q "$NW"
+git -C "$NW" config binnacle.googleFormsPull true
+nightly
+check "nightly: an opted-in pull runs first, then binnacle-run" test "$(calls)" = "pull x "
+check "nightly: the pull runs from the vault clone" grep -qxF "stub-pull cwd=$(cd "$NW" && pwd -P)" "$nlog"
+check "nightly: the pull's exit status logged" grep -q '^--- .* forms pull end: exit 0$' "$nlog"
+check "nightly: Google token-shaped strings masked" bash -c \
+  '! grep -Eq "a0AfB_pullsecret|0gPULLSECRET|GOCSPX-pullsecret" "$1" && grep -q "ya29.\[redacted\] refresh 1//\[redacted\] client GOCSPX-\[redacted\]" "$1"' _ "$nlog"
+nightly STUB_PULL_STATUS=1
+check "nightly: a failed pull does not stop the run" test "$(calls)" = "pull x "
+check "nightly: a failed pull is the exit status when the run succeeded" test "$(cat "$T/nightly.status")" = 1
+check "nightly: the end line says the pull failed" bash -c 'tail -n 1 "$1" | grep -q "end: exit 1 (.*s); forms pull failed (exit 1)$"' _ "$nlog"
+nightly STUB_PULL_STATUS=1 STUB_RUN_STATUS=7
+check "nightly: a failed run's status wins over the pull's" test "$(cat "$T/nightly.status")" = 7
+git -C "$NW" config --unset binnacle.googleFormsPull
 
 # --- setup/shoyu/nightly.sh (stub launchctl) ----------------------------------------------
 mkdir -p "$T/lstub" "$T/lhome"
@@ -1006,6 +1033,313 @@ git -C "$FV" config --unset binnacle.formsSyncDir
 check "mover: refuses without a synced folder" expect_fail mover
 check "mover: says how to set it" grep -q 'binnacle.formsSyncDir' "$T/mover.out"
 check "mover: .binnacle/ is gitignored" bash -c 'git -C "$1" check-ignore -q .binnacle/forms-stoplist && test -z "$(git -C "$1" status --porcelain -- .binnacle)"' _ "$FV"
+
+# --- survey intake: bin/binnacle-forms-google-pull (stubbed Google) ------------------------
+# No network: BINNACLE_GOOGLE_HTTP answers in place of Google from synthetic
+# fixtures (placeholder people jdoe, asmith, bkim, pdoe; example.com
+# addresses). GV is a fresh vault clone; nothing here is committed. Pulls run
+# at TZ=EST5, so a reply at 02:00 UTC is dated the previous local day.
+GV=$T/gpull-vault
+git clone -q "$T/remote.git" "$GV"
+gv_head=$(git -C "$GV" rev-parse HEAD)
+G=$T/gpull
+mkdir -p "$G/creds" "$G/tmp" "$GV/.binnacle/forms-google"
+cat >"$G/google-http.py" <<'EOF'
+# Stub Google: one JSON request on stdin -> "status" line, then a JSON body.
+import json, os, sys, urllib.parse
+req = json.load(sys.stdin)
+u = urllib.parse.urlparse(req["url"])
+q = dict(urllib.parse.parse_qsl(u.query))
+form = req.get("form") or {}
+auth = req["headers"].get("Authorization", "")
+with open(os.environ["STUB_GOOGLE_LOG"], "a") as f:
+    f.write("%s %s%s auth=%s grant=%s\n" % (req["method"], u.netloc, u.path, "yes" if auth else "no",
+                                           form.get("grant_type", "-")))
+def out(status, body):
+    print(status)
+    print(json.dumps(body))
+    sys.exit(0)
+SCOPES = ("https://www.googleapis.com/auth/forms.responses.readonly "
+          "https://www.googleapis.com/auth/forms.body.readonly")
+REFRESH = "1//stub-refresh-token-0123456789"
+if u.netloc == "oauth2.googleapis.com":
+    if form.get("client_secret") != "GOCSPX-stub-client-secret":
+        out(401, {"error": "invalid_client"})
+    if os.environ.get("STUB_GOOGLE_TOKEN") == "invalid":
+        out(400, {"error": "invalid_grant", "error_description": "Token has been expired or revoked."})
+    body = {"access_token": "ya29.stub-access-token", "expires_in": 3599, "token_type": "Bearer",
+            "scope": os.environ.get("STUB_GOOGLE_SCOPE", SCOPES)}
+    if form.get("grant_type") == "authorization_code":
+        if form.get("code") != "stub-code" or len(form.get("code_verifier", "")) < 43:
+            out(400, {"error": "invalid_grant"})
+        body["refresh_token"] = REFRESH
+    elif form.get("refresh_token") != REFRESH:
+        out(400, {"error": "invalid_grant"})
+    out(200, body)
+if auth != "Bearer ya29.stub-access-token":
+    out(401, {"error": {"code": 401, "status": "UNAUTHENTICATED", "message": "no access token"}})
+d = os.environ["STUB_GOOGLE_DIR"]
+if u.path == "/v1/forms/gform-1":
+    out(200, json.load(open(d + "/form.json")))
+if u.path == "/v1/forms/gform-1/responses":
+    if os.environ.get("STUB_GOOGLE_FAIL") == "responses":
+        out(503, {"error": {"code": 503, "status": "UNAVAILABLE", "message": "try again later"}})
+    rs = json.load(open(d + "/responses.json"))
+    start = int(q.get("pageToken") or 0)
+    page = {"responses": rs[start:start + 2]} if rs else {}
+    if start + 2 < len(rs):
+        page["nextPageToken"] = str(start + 2)
+    out(200, page)
+out(404, {"error": {"code": 404, "status": "NOT_FOUND", "message": "Requested entity was not found."}})
+EOF
+cat >"$G/gresp.py" <<'EOF'
+# gresp.py OUT: responses.json from lines "id|createTime|change|satisfied|sessions|pace" on stdin.
+# Every response also carries the respondent's email and a file upload.
+import json, sys
+out = []
+for line in sys.stdin:
+    line = line.rstrip("\n")
+    if not line:
+        continue
+    rid, ct, change, sat, sessions, pace = line.split("|")
+    who = rid.split("-")[0]
+    ans = {"q-file": {"questionId": "q-file",
+                      "fileUploadAnswers": {"answers": [{"fileId": "f-" + rid, "fileName": who + "-notes.pdf"}]}}}
+    for qid, vals in (("q-change", [change]), ("q-sat", [sat]), ("q-sessions", sessions.split(";")), ("q-pace", [pace])):
+        vals = [v for v in vals if v]
+        if vals:
+            ans[qid] = {"questionId": qid, "textAnswers": {"answers": [{"value": v} for v in vals]}}
+    out.append({"formId": "gform-1", "responseId": rid, "createTime": ct, "lastSubmittedTime": ct,
+                "respondentEmail": who + "@example.com", "answers": ans})
+json.dump(out, open(sys.argv[1], "w"))
+EOF
+cat >"$G/browser.py" <<'EOF'
+# Stub browser for --consent: answer the loopback redirect as Google would.
+import os, sys, urllib.parse, urllib.request
+q = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(sys.argv[1]).query))
+with open(os.environ["STUB_BROWSER_LOG"], "w") as f:
+    f.write("scope=%s\naccess_type=%s\nchallenge_method=%s\n" % (q.get("scope"), q.get("access_type"), q.get("code_challenge_method")))
+mode = os.environ.get("STUB_BROWSER_MODE", "ok")
+answer = {"ok": {"code": "stub-code", "state": q["state"]},
+          "deny": {"error": "access_denied", "state": q["state"]},
+          "forged": {"code": "stub-code", "state": "forged"}}[mode]
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+opener.open(q["redirect_uri"] + "/?" + urllib.parse.urlencode(answer), timeout=30).read()
+EOF
+printf '#!/bin/sh\nexec python3 -I "%s/google-http.py"\n' "$G" >"$G/google-http"
+printf '#!/bin/sh\nexec python3 -I "%s/browser.py" "$1"\n' "$G" >"$G/browser"
+chmod +x "$G/google-http" "$G/browser"
+cat >"$G/form.json" <<'EOF'
+{"formId": "gform-1", "revisionId": "r1", "info": {"title": "Reading group check-in"},
+ "items": [
+  {"itemId": "i0", "title": "About this form", "textItem": {}},
+  {"itemId": "i1", "title": "What should we change?",
+   "questionItem": {"question": {"questionId": "q-change", "textQuestion": {"paragraph": true}}}},
+  {"itemId": "i2", "title": "How satisfied are you? (1-5)",
+   "questionItem": {"question": {"questionId": "q-sat", "scaleQuestion": {"low": 1, "high": 5}}}},
+  {"itemId": "i3", "title": "Which sessions helped?",
+   "questionItem": {"question": {"questionId": "q-sessions", "choiceQuestion": {"type": "CHECKBOX",
+     "options": [{"value": "Talks"}, {"value": "Pairing"}]}}}},
+  {"itemId": "i4", "title": "Rate each part",
+   "questionGroupItem": {"questions": [{"questionId": "q-pace", "rowQuestion": {"title": "Pace"}}],
+     "grid": {"columns": {"type": "RADIO", "options": [{"value": "Agree"}]}}}},
+  {"itemId": "i5", "title": "Upload your notes",
+   "questionItem": {"question": {"questionId": "q-file", "fileUploadQuestion": {"folderId": "folder-1"}}}}
+ ]}
+EOF
+gresp() { python3 -I "$G/gresp.py" "$G/responses.json"; }
+w_base='jdoe-1|2025-10-02T09:15:00.123Z|More focus time, fewer meetings|4|Talks;Pairing|Agree
+asmith-1|2025-10-05T14:00:00Z||5|Talks|Strongly agree
+bkim-1|2025-10-14T20:30:00Z|Shorter sessions|2||Disagree
+pdoe-1|2025-10-15T02:00:00Z|Start a little earlier|3|Pairing|Neutral'
+printf '%s\n' "$w_base" | gresp
+printf '{"installed": {"client_id": "stub-client.apps.googleusercontent.com", "client_secret": "GOCSPX-stub-client-secret", "redirect_uris": ["http://localhost"]}}\n' >"$G/creds/client.json"
+printf '{"client_id": "stub-client.apps.googleusercontent.com", "refresh_token": "1//stub-refresh-token-0123456789"}\n' >"$G/token.json"
+git -C "$GV" config binnacle.googleClientFile "$G/creds/client.json"
+git -C "$GV" config binnacle.googleTokenFile "$G/creds/token.json"
+GP=$repo/bin/binnacle-forms-google-pull
+GO=$GV/raw/inbox/forms
+gpull() { # extra env... -- args... -> the pull into $GV, output in $T/gpull.out
+  local envs=()
+  while [ "$#" -gt 0 ] && [ "$1" != -- ]; do envs+=("$1"); shift; done
+  [ "$#" -eq 0 ] || shift
+  env TZ=EST5 TMPDIR="$G/tmp" BINNACLE_GOOGLE_HTTP="$G/google-http" STUB_GOOGLE_LOG="$G/http.log" \
+    STUB_GOOGLE_DIR="$G" BINNACLE_BROWSER="$G/browser" STUB_BROWSER_LOG="$G/browser.log" \
+    "${envs[@]+"${envs[@]}"}" "$GP" --vault "$GV" "$@" >"$T/gpull.out" 2>&1
+}
+gstate() { (cd "$GV" && find raw/inbox .binnacle/forms-google-state -type f ! -name .lock -exec cksum {} + | LC_ALL=C sort); }
+gconf=$GV/.binnacle/forms-google/reading-group.conf
+gwin() { # from to -> the window in the form's settings
+  sed "s/^from=.*/from=$1/; s/^to=.*/to=$2/" "$gconf" >"$gconf.new" && mv "$gconf.new" "$gconf"
+}
+gnote() { printf '%s/form-%s-%s.md' "$GO" "$(sha gform-1 | cut -c1-12)" "$1"; }
+no_http() { test ! -s "$G/http.log"; }
+tmp_clean() { test -z "$(ls -A "$G/tmp")"; }
+: >"$G/http.log"
+
+check "gpull: no form settings is nothing to do" gpull
+check "gpull: says there are no form settings" grep -q 'no form settings' "$T/gpull.out"
+printf '# reading group\nform_title=Reading group check-in\nform_id=https://docs.google.com/forms/d/gform-1/edit\naudience=reading group\nconsent_notice_version=v1\ninvited=5\nfrom=2025-10-01\nto=2025-10-14\n' >"$gconf"
+check "gpull: refuses a client file others can read" expect_fail gpull
+check "gpull: names the client file and the mode" grep -q 'refusing the OAuth client file .*mode 600' "$T/gpull.out"
+chmod 600 "$G/creds/client.json"
+check "gpull: refuses a missing token file" expect_fail gpull
+check "gpull: says how to set the token file" grep -q 'no token file at .*binnacle.googleTokenFile' "$T/gpull.out"
+cp "$G/token.json" "$G/creds/token.json"
+chmod 644 "$G/creds/token.json"
+check "gpull: refuses a token file others can read" expect_fail gpull
+check "gpull: says mode 600" grep -q 'refusing the token file .*mode 600' "$T/gpull.out"
+chmod 600 "$G/creds/token.json"
+git -C "$GV" config binnacle.googleClientFile "$G/creds/missing.json"
+check "gpull: refuses a missing client file" expect_fail gpull
+check "gpull: says how to set the client file" grep -q 'no OAuth client file at .*binnacle.googleClientFile' "$T/gpull.out"
+git -C "$GV" config binnacle.googleClientFile "$G/creds/client.json"
+ln -s "$G/creds/token.json" "$G/creds/token-link.json"
+git -C "$GV" config binnacle.googleTokenFile "$G/creds/token-link.json"
+check "gpull: refuses a symlinked token file" expect_fail gpull
+cp -p "$G/creds/token.json" "$GV/.binnacle/token.json"
+git -C "$GV" config binnacle.googleTokenFile "$GV/.binnacle/token.json"
+check "gpull: refuses a token file inside the vault" expect_fail gpull
+check "gpull: says it is inside the vault" grep -q 'inside the vault' "$T/gpull.out"
+rm -f "$GV/.binnacle/token.json"
+git -C "$GV" config binnacle.googleTokenFile "$G/creds/token.json"
+check "gpull: refused credentials make no HTTP call" no_http
+check "gpull: refused credentials write nothing" test ! -e "$GO"
+
+gwin 2025-10-01 2099-12-31
+check "gpull: an open window exits 0" gpull
+check "gpull: says the window is open" grep -q 'is open until 2099-12-31; nothing pulled' "$T/gpull.out"
+check "gpull: an open window makes no HTTP call" no_http
+check "gpull: an open window writes nothing" test ! -e "$GO"
+gwin 2025-10-01 2025-10-14
+w1=2025-10-01-to-2025-10-14
+GN=$(gnote $w1)
+check "gpull: a closed window exits 0" gpull
+check "gpull: one note named for the declared window" test "$(find "$GO" -name '*.md')" = "$GN"
+check "gpull: settings reach the note" bash -c 'grep -qx "platform: google" "$1" && grep -qx "respondents: 4" "$1" && grep -qx "invited: 5" "$1" && grep -qx "collected_from: 2025-10-01" "$1" && grep -qx "collected_to: 2025-10-14" "$1" && grep -qx "form_id_hash: $2" "$1"' _ "$GN" "$(sha gform-1)"
+check "gpull: a reply at 02:00 UTC counts on the previous local day" grep -q 'Start a little earlier' "$GN"
+check "gpull: scale and grid answers become ratings" bash -c 'grep -qx "Rating: 4 answers, median 3.5." "$1" && grep -qx "## 4. Rate each part \[Pace\]" "$1" && grep -qx "Rating: 4 answers, median between Neutral and Agree." "$1"' _ "$GN"
+check "gpull: checkbox answers joined" grep -Eq 'R[1-4]:\*\* Talks, Pairing$' "$GN"
+check "gpull: no respondent email, name, file or form id in the note" bash -c '! grep -Eq "jdoe|asmith|bkim|pdoe|example\.com|notes\.pdf|Upload your notes|gform-1|About this form" "$1"' _ "$GN"
+check "gpull: the note went through the converter's scrub" grep -q 'Scrubbed by bin/binnacle-forms-to-inbox' "$GN"
+check "gpull: token refresh, form, then every page of responses" test "$(cut -d' ' -f1-2,4 "$G/http.log" | tr '\n' ';')" = \
+  "POST oauth2.googleapis.com/token grant=refresh_token;GET forms.googleapis.com/v1/forms/gform-1 grant=-;GET forms.googleapis.com/v1/forms/gform-1/responses grant=-;GET forms.googleapis.com/v1/forms/gform-1/responses grant=-;"
+check "gpull: no token or secret printed" bash -c '! grep -Eq "stub-access-token|stub-refresh-token|GOCSPX" "$1"' _ "$T/gpull.out"
+check "gpull: temporary csv removed" tmp_clean
+check "gpull: state files are private" test -z "$(find "$GV/.binnacle/forms-google-state" -type f ! -name .lock ! -perm 600)"
+cks=$(cksum <"$GN")
+: >"$G/http.log"
+check "gpull: re-run with no change exits 0" gpull
+check "gpull: says the note is up to date" grep -q 'is up to date' "$T/gpull.out"
+check "gpull: re-run leaves the note as it is (no new shuffle)" test "$(cksum <"$GN")" = "$cks"
+printf '%s\n' "$w_base" | grep -v '^asmith' | gresp
+check "gpull: a response deleted while the note waits exits 0" gpull
+check "gpull: the whole note is rebuilt" bash -c 'grep -qx "respondents: 3" "$1" && grep -q "More focus time" "$1" && grep -q "Start a little earlier" "$1"' _ "$GN"
+check "gpull: still one note" test "$(find "$GO" -name '*.md' | wc -l | tr -d ' ')" = 1
+printf '%s\nlate-1|2025-10-16T15:00:00Z|A late thought|4|Talks|Agree\nearly-1|2025-09-20T15:00:00Z|An early test|1||Disagree\n' "$w_base" | gresp
+before=$(gstate)
+check "gpull: responses outside the window are refused" expect_fail gpull
+check "gpull: the refusal counts them, never their values" bash -c 'grep -q "2 response(s) dated outside window 2025-10-01-to-2025-10-14 and every earlier window (1 before it, 1 after it)" "$1" && ! grep -Eq "late thought|early test|2025-10-16|2025-09-20" "$1"' _ "$T/gpull.out"
+check "gpull: nothing changed by that refusal" test "$(gstate)" = "$before"
+check "gpull: temporary folder clean after a refusal" tmp_clean
+printf '%s\nleak-1|2025-10-06T15:00:00Z|ask jdoe@example.com|3||Agree\n' "$w_base" | gresp
+before=$(gstate)
+check "gpull: a converter refusal exits non-zero" expect_fail gpull
+check "gpull: the converter names the class, not the value" bash -c 'grep -q "email pattern" "$1" && ! grep -q "jdoe@" "$1"' _ "$T/gpull.out"
+check "gpull: nothing changed by a converter refusal" test "$(gstate)" = "$before"
+check "gpull: temporary csv removed after a converter refusal" tmp_clean
+printf '%s\n' "$w_base" | gresp
+before=$(gstate)
+check "gpull: a Forms API failure exits non-zero" expect_fail gpull STUB_GOOGLE_FAIL=responses
+check "gpull: says what Google answered" grep -q 'HTTP 503 UNAVAILABLE' "$T/gpull.out"
+check "gpull: nothing changed by an API failure" test "$(gstate)" = "$before"
+check "gpull: an expired consent exits non-zero" expect_fail gpull STUB_GOOGLE_TOKEN=invalid
+check "gpull: says to run --consent again (7-day Testing consents)" bash -c 'grep -q -- "--consent again" "$1" && grep -q "7 days" "$1"' _ "$T/gpull.out"
+check "gpull: nothing changed by an expired consent" test "$(gstate)" = "$before"
+check "gpull: refuses a token with broader scopes" expect_fail gpull \
+  STUB_GOOGLE_SCOPE="https://www.googleapis.com/auth/forms.responses.readonly https://www.googleapis.com/auth/forms.body.readonly https://www.googleapis.com/auth/drive"
+check "gpull: names the scope refusal" grep -q 'not exactly' "$T/gpull.out"
+check "gpull: nothing changed by the scope refusal" test "$(gstate)" = "$before"
+check "gpull: back to the full window" gpull
+check "gpull: four respondents again" grep -qx 'respondents: 4' "$GN"
+git -C "$GV" add -- "raw/inbox/forms/$(basename "$GN")"
+git -C "$GV" -c user.name=selftest -c user.email=selftest@example.invalid -c commit.gpgsign=false \
+  commit -q --no-verify -m 'waiting note'
+printf '%s\n' "$w_base" | grep -v '^asmith' | gresp
+before=$(gstate)
+: >"$G/http.log"
+check "gpull: a committed waiting note with a changed response exits 0" gpull
+check "gpull: says the note is committed and waiting for ingest" grep -q "$(basename "$GN") is already committed and waiting for ingest" "$T/gpull.out"
+check "gpull: a committed waiting note makes no HTTP call" no_http
+check "gpull: a committed waiting note and its state are left unchanged" test "$(gstate)" = "$before"
+printf '%s\nlate-1|2025-10-16T15:00:00Z|A late thought|4|Talks|Agree\n' "$w_base" | gresp
+gwin 2025-10-01 2025-10-16
+check "gpull: widening while a committed note waits exits 0" gpull
+check "gpull: says the committed note is waiting for ingest" grep -q "$(basename "$GN") is already committed and waiting for ingest" "$T/gpull.out"
+check "gpull: widening leaves a committed note and its state unchanged" test "$(gstate)" = "$before"
+gwin 2025-10-17 2025-10-31
+check "gpull: the next window while a committed note waits exits 0" gpull
+check "gpull: says the committed note waits before the next window" grep -q "$(basename "$GN") is already committed and waiting for ingest" "$T/gpull.out"
+check "gpull: the next window leaves a committed note and its state unchanged" test "$(gstate)" = "$before"
+check "gpull: the next window while a committed note waits makes no HTTP call" no_http
+gwin 2025-10-01 2025-10-14
+git -C "$GV" reset -q "$gv_head"
+printf '%s\nlate-1|2025-10-16T15:00:00Z|A late thought|4|Talks|Agree\n' "$w_base" | gresp
+gwin 2025-10-01 2025-10-16
+w1w=2025-10-01-to-2025-10-16
+check "gpull: widening to= while the note waits exits 0" gpull
+check "gpull: one complete note under the wider window" bash -c 'test "$(find "$1" -name "*.md")" = "$2" && grep -qx "respondents: 5" "$2" && grep -q "A late thought" "$2"' _ "$GO" "$(gnote $w1w)"
+check "gpull: the old-named note is removed" test ! -e "$GN"
+GN=$(gnote $w1w)
+before=$(gstate)
+gwin 2025-10-02 2025-10-16
+check "gpull: narrowing the window while the note waits is refused" expect_fail gpull
+check "gpull: that refusal names the waiting note" grep -q "$(basename "$GN"), is not ingested yet" "$T/gpull.out"
+gwin 2025-10-02 2025-10-20
+check "gpull: shifting the window while the note waits is refused" expect_fail gpull
+gwin 2025-10-01 2025-10-16
+check "gpull: nothing changed by those refusals" test "$(gstate)" = "$before"
+mv "$GN" "$T/gpull-ingested.md"
+: >"$G/http.log"
+check "gpull: an ingested window is done" gpull
+check "gpull: says to set the next window" grep -q 'is done' "$T/gpull.out"
+check "gpull: a done window makes no HTTP call" no_http
+check "gpull: a done window writes nothing" test -z "$(find "$GO" -name '*.md')"
+printf '%s\nlate-1|2025-10-16T15:00:00Z|A late thought|4|Talks|Agree\ngap-1|2025-10-17T15:00:00Z|In the gap|3||Agree\nnext-1|2025-10-20T15:00:00Z|Next window only|5|Talks|Agree\n' "$w_base" | gresp
+gwin 2025-10-10 2025-10-31
+before=$(gstate)
+check "gpull: a window overlapping an ingested one is refused" expect_fail gpull
+check "gpull: that refusal names the earlier window" grep -q "overlaps window $w1w," "$T/gpull.out"
+gwin 2025-10-18 2025-10-31
+check "gpull: a response between windows is refused" expect_fail gpull
+check "gpull: counted as before the window" grep -q '(1 before it, 0 after it)' "$T/gpull.out"
+check "gpull: nothing changed by those refusals" test "$(gstate)" = "$before"
+gwin 2025-10-17 2025-10-31
+check "gpull: the next window converts" gpull
+check "gpull: its note holds only its own responses" bash -c 'test "$(find "$1" -name "*.md")" = "$2" && grep -qx "respondents: 2" "$2" && grep -q "Next window only" "$2" && ! grep -q "More focus time" "$2"' _ "$GO" "$(gnote 2025-10-17-to-2025-10-31)"
+check "gpull: never commits" bash -c 'test "$(git -C "$1" rev-parse HEAD)" = "$2" && test -z "$(git -C "$1" diff --cached --name-only)"' _ "$GV" "$gv_head"
+check "gpull: settings and state are gitignored" bash -c 'test -z "$(git -C "$1" status --porcelain -- .binnacle)"' _ "$GV"
+
+# --consent: the stub browser answers the loopback redirect.
+rm -f "$G/creds/token.json"
+check "gpull --consent: exits 0" gpull -- --consent
+check "gpull --consent: asks for exactly the two read-only scopes, offline, with PKCE" bash -c \
+  'grep -qx "scope=https://www.googleapis.com/auth/forms.body.readonly https://www.googleapis.com/auth/forms.responses.readonly" "$1" && grep -qx "access_type=offline" "$1" && grep -qx "challenge_method=S256" "$1"' _ "$G/browser.log"
+check "gpull --consent: token file written mode 600" test -n "$(find "$G/creds/token.json" -perm 600)"
+check "gpull --consent: holds the refresh token" grep -q '"refresh_token": "1//stub-refresh-token-0123456789"' "$G/creds/token.json"
+check "gpull --consent: no token printed" bash -c '! grep -Eq "stub-refresh-token|stub-access-token|GOCSPX|stub-code" "$1"' _ "$T/gpull.out"
+check "gpull --consent: the saved consent pulls" gpull
+rm -f "$G/creds/token.json"
+check "gpull --consent: refuses narrower scopes" expect_fail gpull STUB_GOOGLE_SCOPE=https://www.googleapis.com/auth/forms.responses.readonly -- --consent
+check "gpull --consent: narrower scopes save nothing" test ! -e "$G/creds/token.json"
+check "gpull --consent: a denied consent exits non-zero" expect_fail gpull STUB_BROWSER_MODE=deny -- --consent
+check "gpull --consent: a forged answer is refused" expect_fail gpull STUB_BROWSER_MODE=forged -- --consent
+check "gpull --consent: says the state does not match" grep -q 'does not match' "$T/gpull.out"
+check "gpull --consent: refusals save nothing" test -z "$(find "$G/creds" -name 'token*.json' ! -name token-link.json)"
+git -C "$GV" config binnacle.googleTokenFile "$GV/.binnacle/token.json"
+check "gpull --consent: refuses a token file inside the vault" expect_fail gpull -- --consent
+check "gpull --consent: that refusal saves nothing" test ! -e "$GV/.binnacle/token.json"
+git -C "$GV" config binnacle.googleTokenFile "$G/creds/token.json"
 
 # --- setup/work-brain (company brain on a work machine) -------------------------------------
 # A throwaway HOME with a personal ~/binnacle that must never change. The

@@ -150,9 +150,12 @@ free-text answers labelled R1..Rn in a random order, and nothing written
 at all when an answer matches an email, phone or card pattern or a local
 stop-list. It never commits. In a work brain, a Power Automate flow and
 `setup/forms/mover.sh` feed it from Microsoft Forms
-(`setup/forms/CHECKLIST.md`); in the personal vault, run it on a Google
-Forms export by hand. `CLAUDE.md` says how such notes are ingested,
-including the optional `wiki/people/` zone for a manager's surveys about
+(`setup/forms/CHECKLIST.md`); in the personal vault,
+`bin/binnacle-forms-google-pull` feeds it from your own Google Forms
+through the Forms API, read-only, once each window has closed, and can run
+just before the nightly run (opt in; `setup/forms/GOOGLE-CHECKLIST.md`),
+or you run it on a Google Forms export by hand. `CLAUDE.md` says how
+such notes are ingested, including the optional `wiki/people/` zone for a manager's surveys about
 direct reports (off unless `git config binnacle.peopleZone true`).
 
 ## Self-test
@@ -172,12 +175,15 @@ auto-merge), plus `bin/binnacle-nightly` and `setup/shoyu/nightly.sh`
 a remote, updating from a newer template (local and connected), the
 base-permission and app-installation checks with a stubbed
 `gh`), the survey converter and mover (csv and xlsx exports of both
-platforms, the scrub, refusals, ratings, the R1..Rn shuffle, re-runs) and
-the people-zone guard, against throwaway repositories built from the
-template's own files only, so it also runs inside a vault with content.
-In a work brain it skips the work-brain setup, run and connect checks,
-since its `CLAUDE.md` already carries the work rules. CI runs it on
-changes to scripts (`.github/workflows/selftest.yml`).
+platforms, the scrub, refusals, ratings, the R1..Rn shuffle, re-runs), the
+Google Forms pull (credential-file refusals, windows, idempotent re-runs,
+the handoff to the converter, nothing written on failure, consent, with a
+stubbed Google and no network) and the people-zone guard, against
+throwaway repositories built from the template's own files only, so it
+also runs inside a vault with content. In a work brain it skips the
+work-brain setup, run and connect checks, since its `CLAUDE.md` already
+carries the work rules. CI runs it on changes to scripts
+(`.github/workflows/selftest.yml`).
 
 ## Roadmap
 
